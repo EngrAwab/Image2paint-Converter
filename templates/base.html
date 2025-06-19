@@ -12,174 +12,77 @@
 
   <style>
     :root {
-      --bg: #f8f9fa;
-      --card-bg: #ffffff;
-      --primary: #3498db;
-      --secondary: #6c757d;
-      --accent: #2c3e50;
-      --text: #2c3e50;
-      --border-light: #ddd;
-      --shadow: rgba(0,0,0,0.1);
-      --header-bg: #343a40;
-      --header-text: #ffffff;
-      --nav-hover: rgba(255,255,255,0.1);
-      --nav-active: #3498db;
+      --bg:#f8f9fa; --card-bg:#ffffff; --primary:#3498db; --secondary:#6c757d;
+      --accent:#2c3e50; --text:#2c3e50; --border-light:#ddd; --shadow:rgba(0,0,0,0.1);
+      --header-bg:#343a40; --header-text:#ffffff; --nav-hover:rgba(255,255,255,0.1);
+      --nav-active:#3498db;
+    }
+    *{margin:0;padding:0;box-sizing:border-box;font-family:'Poppins',sans-serif}
+    body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+
+    /* ===== HEADER / NAVBAR ===== */
+    header.site-header{
+      background:var(--header-bg);color:var(--header-text);padding:1rem 2rem;
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;
+      box-shadow:0 4px 10px var(--shadow);position:sticky;top:0;z-index:1000;
+      gap:1rem;
+    }
+    .logo{font-size:1.75rem;font-weight:600;color:var(--header-text)}
+
+    nav.site-nav{display:flex;gap:1rem;flex-wrap:wrap}
+    nav.site-nav a{
+      display:block;padding:0.5rem 1rem;color:var(--header-text);text-decoration:none;
+      font-weight:500;border-radius:5px;transition:background-color .2s ease;
+    }
+    nav.site-nav a:hover{background:var(--nav-hover)}
+    nav.site-nav a.active{background:var(--nav-active);box-shadow:0 2px 8px rgba(0,0,0,0.2);font-weight:600}
+
+    /* ===== GLOBAL UPLOADER ===== */
+    .global-upload-form{display:flex;align-items:center;gap:.5rem;flex-wrap:nowrap}
+    .global-upload-form button{
+      background:transparent;border:1px solid var(--header-text);color:var(--header-text);
+      padding:.35rem .8rem;border-radius:4px;font-size:.9rem;cursor:pointer;
+      transition:background .2s ease;
+    }
+    .global-upload-form button:hover{background:var(--nav-hover)}
+    .thumb-chip{
+      width:32px;height:32px;border-radius:4px;border:1px solid var(--border-light);
+      object-fit:cover;
     }
 
-    * {
-      margin: 0; padding: 0; box-sizing: border-box;
-      font-family: 'Poppins', sans-serif;
+    /* ===== MAIN CONTAINER ===== */
+    .container{
+      flex:1;max-width:1200px;width:100%;margin:2rem auto;background:var(--card-bg);
+      border-radius:10px;box-shadow:0 10px 25px var(--shadow);padding:2rem;
     }
+    h1.page-title{font-size:2.4rem;color:var(--primary);text-align:center;margin-bottom:1.5rem}
 
-    body {
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
+    /* ===== GENERAL FORM & UI ELEMENTS ===== */
+    form{margin-bottom:2rem}
+    label{font-weight:600;margin-bottom:.25rem;display:block;color:var(--accent)}
+    input[type=file],input[type=text],input[type=number],select{
+      width:100%;padding:.6rem 1rem;border:2px solid var(--border-light);
+      border-radius:5px;margin-bottom:1rem;font-size:1rem;background:#fff;
     }
+    input[type=range]{width:100%;margin-bottom:1rem}
+    textarea{
+      width:100%;padding:.6rem 1rem;border:2px solid var(--border-light);
+      border-radius:5px;margin-bottom:1rem;font-family:'Poppins',sans-serif;
+    }
+    button{
+      background:var(--primary);color:#fff;border:none;padding:.75rem 1.5rem;
+      border-radius:5px;font-size:1rem;font-weight:600;cursor:pointer;
+      transition:background .2s ease,transform .1s ease;
+    }
+    button:hover{background:var(--accent);transform:scale(1.02)}
+    .btn-secondary{background:var(--secondary)}
+    .btn-secondary:hover{background:#5a6268}
 
-    /* ====== HEADER / NAVBAR ====== */
-    header.site-header {
-      background: var(--header-bg);
-      color: var(--header-text);
-      padding: 1rem 2rem;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      box-shadow: 0 4px 10px var(--shadow);
-      position: sticky;
-      top: 0;
-      z-index: 1000;
+    .error{color:red;margin-bottom:1rem;font-weight:bold}
+    .result-img{
+      display:block;margin:1rem auto;max-width:100%;
+      border:2px solid var(--border-light);border-radius:8px;
     }
-    .logo {
-      font-size: 1.75rem;
-      font-weight: 600;
-      color: var(--header-text);
-    }
-    nav.site-nav {
-      display: flex;
-      gap: 1rem;
-    }
-    nav.site-nav a {
-      display: block;
-      padding: 0.5rem 1rem;
-      color: var(--header-text);
-      text-decoration: none;
-      font-weight: 500;
-      border-radius: 5px;
-      transition: background-color 0.2s ease;
-    }
-    nav.site-nav a:hover {
-      background: var(--nav-hover);
-    }
-    nav.site-nav a.active {
-      background: var(--nav-active);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      font-weight: 600;
-    }
-
-    /* ====== MAIN CONTAINER ====== */
-    .container {
-      flex: 1;
-      max-width: 1200px;
-      width: 100%;
-      margin: 2rem auto;
-      background: var(--card-bg);
-      border-radius: 10px;
-      box-shadow: 0 10px 25px var(--shadow);
-      padding: 2rem;
-    }
-
-    h1.page-title {
-      font-size: 2.4rem;
-      color: var(--primary);
-      text-align: center;
-      margin-bottom: 1.5rem;
-    }
-
-    form {
-      margin-bottom: 2rem;
-    }
-    label {
-      font-weight: 600;
-      margin-bottom: 0.25rem;
-      display: block;
-      color: var(--accent);
-    }
-    input[type="file"],
-    input[type="text"],
-    input[type="number"],
-    select {
-      width: 100%;
-      padding: 0.6rem 1rem;
-      border: 2px solid var(--border-light);
-      border-radius: 5px;
-      margin-bottom: 1rem;
-      font-size: 1rem;
-      background: #fff;
-    }
-    input[type="range"] {
-      width: 100%;
-      margin-bottom: 1rem;
-    }
-    textarea {
-      width: 100%;
-      padding: 0.6rem 1rem;
-      border: 2px solid var(--border-light);
-      border-radius: 5px;
-      margin-bottom: 1rem;
-      font-family: 'Poppins', sans-serif;
-    }
-
-    button {
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      padding: 0.75rem 1.5rem;
-      border-radius: 5px;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background-color 0.2s ease, transform 0.1s ease;
-    }
-    button:hover { background: var(--accent); transform: scale(1.02); }
-    .btn-secondary { background: var(--secondary); }
-    .btn-secondary:hover { background: #5a6268; }
-
-    .error {
-      color: red;
-      margin-bottom: 1rem;
-      font-weight: bold;
-    }
-
-    .result-img {
-      display: block;
-      margin: 1rem auto;
-      max-width: 100%;
-      border: 2px solid var(--border-light);
-      border-radius: 8px;
-    }
-
-    .color-block {
-      width: 100px;
-      height: 100px;
-      border-radius: 5px;
-      border: 2px solid var(--border-light);
-      margin: 0.5rem;
-    }
-
-    .swatch-grid { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
-    .swatch-item { text-align: center; width: 120px; }
-
-    .db-action-btn { margin: 0.5rem 0; width: 100%; }
-
-    .message {
-      padding: 0.75rem; border-radius: 5px; margin-bottom: 1rem;
-    }
-    .message.success { background: #d4edda; color: #155724; }
-    .message.warning { background: #fff3cd; color: #856404; }
-    .message.danger  { background: #f8d7da; color: #721c24; }
   </style>
 </head>
 <body>
@@ -187,6 +90,32 @@
   <!-- ===== SITE HEADER ===== -->
   <header class="site-header">
     <div class="logo">Artistic Vision Studio</div>
+
+    <!-- ─── Global Image Uploader ─── -->
+    <form id="globalUploadForm"
+          class="global-upload-form"
+          method="post"
+          enctype="multipart/form-data"
+          action="{{ url_for('upload_shared_image') }}">
+
+      <!-- hidden picker -->
+      <input type="file" id="globalImageInput" name="image"
+             accept=".png,.jpg,.jpeg" hidden>
+
+      <!-- trigger / replace button -->
+      <button type="button"
+              onclick="document.getElementById('globalImageInput').click()">
+        {% if session.get('shared_img_path') %}Replace&nbsp;Image{% else %}Upload&nbsp;Image{% endif %}
+      </button>
+
+      <!-- tiny thumbnail preview -->
+      {% if session.get('shared_img_thumb') %}
+        <img src="data:image/png;base64,{{ session['shared_img_thumb'] }}"
+             alt="thumb" class="thumb-chip">
+      {% endif %}
+    </form>
+
+    <!-- ─── Navigation ─── -->
     <nav class="site-nav">
       <a href="{{ url_for('image_generator_page') }}"   class="{% if active_page=='image_generator' %}active{% endif %}">🖼️ Image Generator</a>
       <a href="{{ url_for('shape_detector_page') }}"    class="{% if active_page=='shape_detector' %}active{% endif %}">🔍 Shape Detector</a>
@@ -202,12 +131,39 @@
   <!-- ===== MAIN CONTENT ===== -->
   <div class="container">
     {% block content %}
-    <!-- Child templates will inject content here -->
     {% endblock %}
   </div>
 
-  {# ===============  CHILD SCRIPTS GO HERE  =============== #}
-  {% block extra_js %}
-  {% endblock %}
+  <!-- ===== PAGE-SPECIFIC SCRIPTS ===== -->
+  {% block extra_js %}{% endblock %}
+
+  <!-- ===== Global Uploader JS ===== -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const picker = document.getElementById('globalImageInput');
+      picker?.addEventListener('change', async evt => {
+        const file = evt.target.files[0];
+        if (!file) return;
+
+        const fd = new FormData();
+        fd.append('image', file);
+
+        try {
+          const res = await fetch('{{ url_for("upload_shared_image") }}', {
+            method: 'POST',
+            body: fd
+          });
+          const j = await res.json();
+          if (j.ok) {
+            location.reload();      // refresh so every page sees new image
+          } else {
+            alert(j.msg || 'Upload failed');
+          }
+        } catch (err) {
+          alert(err);
+        }
+      });
+    });
+  </script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block title %}Shape Art Generator{% endblock %}
 
 {% block content %}
   <h1 class="page-title">🖼️ Shape Art Generator</h1>
@@ -7,104 +8,209 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="post" enctype="multipart/form-data" action="{{ url_for('image_generator_page') }}">
-    <label for="image">Upload a base image (jpg/png):</label>
-    <input
-      type="file"
-      id="image"
-      name="image"
-      accept=".jpg,.jpeg,.png"
-      required
-    >
+  {% if not shared_img_exists %}
+    <div class="message warning">
+      No image loaded. Use the <strong>Upload / Replace Image</strong> button
+      in the header first, then press <em>Generate Shape Art</em>.
+    </div>
+  {% endif %}
+
+  <!-- ───────── Shape-Art Form ───────── -->
+  <form method="post" action="{{ url_for('image_generator_page') }}">
+    <input type="hidden" name="action" value="generate">
 
     <label for="shape_type">Shape Type:</label>
     <select id="shape_type" name="shape_type" onchange="toggleSizeInputs()">
-      <option value="Triangle" {% if shape_option == 'Triangle' %}selected{% endif %}>
-        Triangle
-      </option>
-      <option value="Rectangle" {% if shape_option == 'Rectangle' %}selected{% endif %}>
-        Rectangle
-      </option>
-      <option value="Circle" {% if shape_option == 'Circle' %}selected{% endif %}>
-        Circle
-      </option>
+      <option value="Triangle"  {% if shape_option=='Triangle'  %}selected{% endif %}>Triangle</option>
+      <option value="Rectangle" {% if shape_option=='Rectangle' %}selected{% endif %}>Rectangle</option>
+      <option value="Circle"    {% if shape_option=='Circle'    %}selected{% endif %}>Circle</option>
     </select>
 
     <label for="num_shapes">Number of Shapes:</label>
-    <input
-      type="number"
-      id="num_shapes"
-      name="num_shapes"
-      min="1"
-      max="500"
-      value="{{ num_shapes or 100 }}"
-    >
+    <input type="number" id="num_shapes" name="num_shapes"
+           min="1" max="500" value="{{ num_shapes or 100 }}">
 
-    <div id="triangle_sizes" {% if shape_option != 'Triangle' %}style="display:none;"{% endif %}>
+    <div id="triangle_sizes" {% if shape_option!='Triangle' %}style="display:none"{% endif %}>
       <label for="max_triangle_size">Max Triangle Size:</label>
-      <input
-        type="number"
-        id="max_triangle_size"
-        name="max_triangle_size"
-        min="1"
-        max="100"
-        value="{{ max_size or 50 }}"
-      >
-
+      <input type="number" id="max_triangle_size" name="max_triangle_size"
+             min="1" max="100" value="{{ max_size or 50 }}">
       <label for="min_triangle_size">Min Triangle Size:</label>
-      <input
-        type="number"
-        id="min_triangle_size"
-        name="min_triangle_size"
-        min="1"
-        max="100"
-        value="{{ min_size or 15 }}"
-      >
+      <input type="number" id="min_triangle_size" name="min_triangle_size"
+             min="1" max="100" value="{{ min_size or 15 }}">
     </div>
 
-    <div id="rectcircle_sizes" {% if shape_option == 'Triangle' %}style="display:none;"{% endif %}>
+    <div id="rectcircle_sizes" {% if shape_option=='Triangle' %}style="display:none"{% endif %}>
       <label for="min_size">Min Shape Size:</label>
-      <input
-        type="number"
-        id="min_size"
-        name="min_size"
-        min="1"
-        max="100"
-        value="{{ min_size or 10 }}"
-      >
-
+      <input type="number" id="min_size" name="min_size"
+             min="1" max="100" value="{{ min_size or 10 }}">
       <label for="max_size">Max Shape Size:</label>
-      <input
-        type="number"
-        id="max_size"
-        name="max_size"
-        min="1"
-        max="100"
-        value="{{ max_size or 15 }}"
-      >
+      <input type="number" id="max_size" name="max_size"
+             min="1" max="100" value="{{ max_size or 15 }}">
     </div>
 
-    <button type="submit">Generate Shape Art</button>
+    <button type="submit" class="btn btn-primary"
+            {% if not shared_img_exists %}disabled{% endif %}>
+      Generate Shape Art
+    </button>
   </form>
 
   {% if result_image_data %}
+    <hr class="my-4">
+
+    <!-- ───────── Result & Download ───────── -->
     <h2>Resulting Shape Art:</h2>
-    <img
-      class="result-img"
-      src="data:image/png;base64,{{ result_image_data }}"
-    >
-    <form action="{{ url_for('download_shape_art') }}" method="get">
+    <img id="generatedImg"
+         class="result-img border rounded"
+         src="data:image/png;base64,{{ result_image_data }}"
+         alt="Shape art result"
+         style="cursor:crosshair;">
+    <form action="{{ url_for('download_shape_art') }}" method="get" class="mt-3">
       <button type="submit" class="btn-secondary">Download Shape Art</button>
     </form>
-  {% endif %}
 
-  <script>
-    function toggleSizeInputs() {
-      const shape = document.getElementById('shape_type').value;
-      document.getElementById('triangle_sizes').style.display =
-        (shape === 'Triangle') ? 'block' : 'none';
-      document.getElementById('rectcircle_sizes').style.display =
-        (shape !== 'Triangle') ? 'block' : 'none';
-    }
-  </script>
+    <!-- ───────── Paint Recipe Generator ───────── -->
+    <hr class="my-4">
+    <h3 class="mb-3">🎨 Paint Recipe Generator</h3>
+    <form id="recipeForm" class="mb-4">
+      <input type="hidden" id="selectedColorInput" name="selected_color">
+      <!-- preserve context -->
+      <input type="hidden" name="shape_type"        value="{{ shape_option }}">
+      <input type="hidden" name="num_shapes"        value="{{ num_shapes }}">
+      <input type="hidden" name="min_triangle_size" value="{{ min_size }}">
+      <input type="hidden" name="max_triangle_size" value="{{ max_size }}">
+      <input type="hidden" name="min_size"          value="{{ min_size }}">
+      <input type="hidden" name="max_size"          value="{{ max_size }}">
+
+      <div class="row g-2 align-items-center">
+        <div class="col-md-4">
+          <label class="form-label">Colour&nbsp;DB</label>
+          <select name="db_choice" class="form-select" required>
+            {% for db in db_list %}
+              <option value="{{ db }}">{{ db }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Precision&nbsp;(step&nbsp;%)</label>
+          <input type="number" name="step" class="form-control"
+                 min="1" max="50" step="0.5" value="10.0" required>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Picked&nbsp;RGB</label>
+          <input type="text" id="rgbDisplay" class="form-control" readonly>
+        </div>
+        <div class="col-md-2 text-end">
+          <label>&nbsp;</label><br>
+          <button id="generateBtn" class="btn btn-success w-100" disabled>
+            Generate Recipe
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <style>
+      .recipes-row { display:flex; flex-wrap:wrap; gap:1rem; }
+      .recipe-card {
+        flex:1 1 calc(33.333% - 1rem);
+        min-width:250px;
+        border:1px solid #ddd;
+        border-radius:6px;
+        padding:1rem;
+        background:#fff;
+      }
+      .recipe-card h5 { margin-bottom:.5rem; }
+      .recipe-card ul { padding-left:1.25rem; margin:0; }
+      .swatch-block {
+        width:80px; height:80px;
+        border:1px solid #ddd;
+        border-radius:4px;
+        margin-bottom:.25rem;
+      }
+    </style>
+
+    <div id="recipeResults"></div>
+  {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function toggleSizeInputs() {
+    const shape = document.getElementById('shape_type').value;
+    document.getElementById('triangle_sizes').style.display =
+      (shape === 'Triangle') ? 'block' : 'none';
+    document.getElementById('rectcircle_sizes').style.display =
+      (shape !== 'Triangle') ? 'block' : 'none';
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const img     = document.getElementById('generatedImg');
+    if (!img) return;
+
+    const rgbDisp = document.getElementById('rgbDisplay');
+    const hidden  = document.getElementById('selectedColorInput');
+    const genBtn  = document.getElementById('generateBtn');
+    const form    = document.getElementById('recipeForm');
+    const output  = document.getElementById('recipeResults');
+
+    // off-screen canvas for sampling
+    const cv = document.createElement('canvas'),
+          ctx= cv.getContext('2d');
+    const sync = () => {
+      cv.width  = img.naturalWidth;
+      cv.height = img.naturalHeight;
+      ctx.drawImage(img, 0, 0);
+    };
+    img.complete ? sync() : img.addEventListener('load', sync, { once:true });
+
+    // click-to-sample
+    img.addEventListener('click', ev => {
+      const r = img.getBoundingClientRect();
+      const x = Math.round((ev.clientX - r.left)*img.naturalWidth / r.width);
+      const y = Math.round((ev.clientY - r.top )*img.naturalHeight/ r.height);
+      const [R,G,B] = ctx.getImageData(x,y,1,1).data;
+      const rgbStr  = `${R},${G},${B}`;
+      rgbDisp.value = hidden.value = rgbStr;
+      genBtn.disabled = false;
+    });
+
+    // AJAX recipe
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (genBtn.disabled) return;
+      genBtn.disabled = true;
+      genBtn.textContent = 'Generating…';
+
+      try {
+        const res = await fetch('/generate_recipe', {
+          method:'POST', body:new FormData(form)
+        });
+        const j = await res.json();
+        if (!j.ok) throw new Error(j.msg||'Server error');
+
+        const cards = j.recipes.map((r,i)=>`
+          <div class="recipe-card">
+            <h5>Recipe ${i+1}<br><small>(Err ${r.error.toFixed(2)})</small></h5>
+            <div style="display:flex;gap:.5rem;justify-content:center" class="mb-2">
+              <div>
+                <div class="swatch-block" style="background:rgb(${hidden.value})"></div>
+                <small>Target</small>
+              </div>
+              <div>
+                <div class="swatch-block" style="background:rgb(${r.mix})"></div>
+                <small>Mixed</small>
+              </div>
+            </div>
+            <ul>${r.recipe.map(x=>`<li>${x.name}: ${x.perc}%</li>`).join('')}</ul>
+          </div>`).join('');
+
+        output.innerHTML = `<div class="recipes-row">${cards}</div>`;
+      } catch(err){
+        alert(err.message);
+      } finally {
+        genBtn.disabled = false;
+        genBtn.textContent = 'Generate Recipe';
+      }
+    });
+  });
+</script>
 {% endblock %}

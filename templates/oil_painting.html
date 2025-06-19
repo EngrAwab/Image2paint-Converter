@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% block title %}Oil Painting Generator{% endblock %}
+
 {% block content %}
   <h1 class="page-title">🎨 Oil Painting Generator</h1>
 
@@ -6,37 +8,182 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="post" enctype="multipart/form-data" action="{{ url_for('oil_painting_page') }}">
-    <label for="oil_image">Upload an image (jpg/png):</label>
-    <input type="file" id="oil_image" name="oil_image" accept=".jpg,.jpeg,.png" required>
+  <form method="post"
+        enctype="multipart/form-data"
+        action="{{ url_for('oil_painting_page') }}"
+        class="oil-form">
+    <input type="hidden" name="action" value="generate">
 
-    <label for="intensity">
-      Painting Intensity:
+    
+
+    <label for="intensity" style="display:block; margin-top:1rem">
+      Painting&nbsp;Intensity:
       <span id="int_label">{{ intensity or 10 }}</span>
     </label>
-    <input
-      type="range"
-      id="intensity"
-      name="intensity"
-      min="1"
-      max="100"
-      value="{{ intensity or 10 }}"
-      oninput="int_label.innerText = this.value;"
-    >
+    <input type="range"
+           id="intensity"
+           name="intensity"
+           min="1"
+           max="100"
+           value="{{ intensity or 10 }}"
+           oninput="int_label.innerText = this.value"
+           style="width:100%">
 
-    <button type="submit">Generate Oil Painting</button>
+    <button type="submit" class="btn-primary" style="margin-top:1rem">
+      Generate&nbsp;Oil&nbsp;Painting
+    </button>
   </form>
 
   {% if result_image_data %}
-    <h2>Result:</h2>
-    <img
-      class="result-img"
-      src="data:image/png;base64,{{ result_image_data }}"
-      alt="Oil-painted result"
-    >
+    <h2 style="margin-top:2rem">Result & Recipe Generator</h2>
 
-    <form action="{{ url_for('download_oil') }}" method="get">
-      <button type="submit" class="btn-secondary">Download Oil Painting</button>
+    <div style="display:flex; flex-wrap:wrap; gap:2rem; align-items:flex-start;">
+      {% if original_image_data %}
+        <div style="flex:1; min-width:280px; text-align:center">
+          <h3>Original</h3>
+          <img class="orig-img"
+               src="data:image/png;base64,{{ original_image_data }}"
+               alt="Original image"
+               style="max-width:100%; border:1px solid #ccc; border-radius:4px">
+        </div>
+      {% endif %}
+      <div style="flex:1; min-width:280px; text-align:center">
+        <h3>Oil Painting</h3>
+        <img id="oilResultImg"
+             class="result-img"
+             src="data:image/png;base64,{{ result_image_data }}"
+             alt="Oil-painted result"
+             style="max-width:100%; border:1px solid #ccc; border-radius:4px; cursor:crosshair;">
+      </div>
+    </div>
+
+    <form action="{{ url_for('download_oil') }}" method="get" style="margin-top:1rem">
+      <button type="submit" class="btn-secondary">
+        Download&nbsp;Oil&nbsp;Painting
+      </button>
     </form>
+
+    <hr class="my-4">
+
+    <h3 class="mb-3">🎨 Paint Recipe Generator</h3>
+    <form id="recipeForm" class="mb-4">
+      <input type="hidden" id="selectedColorInput" name="selected_color">
+      <label class="form-label">Colour&nbsp;DB</label>
+      <select name="db_choice" class="form-select" required>
+        {% for db in db_list %}
+          <option value="{{ db }}">{{ db }}</option>
+        {% endfor %}
+      </select>
+
+      <label class="form-label">Precision&nbsp;(step&nbsp;%)</label>
+      <input type="number" name="step" class="form-control"
+             min="1" max="50" step="0.5" value="10.0" required>
+
+      <label class="form-label">Picked&nbsp;RGB</label>
+      <input type="text" id="rgbDisplay" class="form-control" readonly>
+
+      <div class="text-end" style="margin-top:1rem;">
+        <button id="generateBtn" class="btn btn-success" disabled>
+          Generate Recipe
+        </button>
+      </div>
+    </form>
+
+    <style>
+      .recipes-row { display:flex; flex-wrap:wrap; gap:1rem; }
+      .recipe-card {
+        flex:1 1 calc(33.333% - 1rem);
+        min-width:240px;
+        border:1px solid #ddd;
+        border-radius:6px;
+        padding:1rem;
+        background:#fff;
+      }
+      .recipe-card h5 { margin-bottom:.5rem; }
+      .recipe-card ul { padding-left:1.25rem; margin:0; }
+      .swatch-block {
+        width:80px; height:80px;
+        border:1px solid #ddd;
+        border-radius:4px;
+        margin-bottom:.25rem;
+      }
+    </style>
+
+    <div id="recipeResults"></div>
   {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const img     = document.getElementById('oilResultImg');
+  const rgbDisp = document.getElementById('rgbDisplay');
+  const hidden  = document.getElementById('selectedColorInput');
+  const genBtn  = document.getElementById('generateBtn');
+  const form    = document.getElementById('recipeForm');
+  const output  = document.getElementById('recipeResults');
+
+  if (!img) return;
+
+  // off-screen canvas for sampling
+  const cv = document.createElement('canvas'),
+        ctx= cv.getContext('2d');
+  const sync = () => {
+    cv.width  = img.naturalWidth;
+    cv.height = img.naturalHeight;
+    ctx.drawImage(img, 0, 0);
+  };
+  img.complete ? sync() : img.addEventListener('load', sync, { once:true });
+
+  // click-to-sample pixel
+  img.addEventListener('click', ev => {
+    const r = img.getBoundingClientRect();
+    const x = Math.round((ev.clientX - r.left)  * img.naturalWidth  / r.width);
+    const y = Math.round((ev.clientY - r.top)   * img.naturalHeight / r.height);
+    const [R,G,B] = ctx.getImageData(x, y, 1, 1).data;
+    const rgbStr  = `${R},${G},${B}`;
+    rgbDisp.value = hidden.value = rgbStr;
+    genBtn.disabled = false;
+  });
+
+  // AJAX recipe submission
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (genBtn.disabled) return;
+    genBtn.disabled = true;
+    genBtn.textContent = 'Generating…';
+    try {
+      const res = await fetch('/generate_recipe', {
+        method: 'POST',
+        body: new FormData(form)
+      });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.msg || 'Server error');
+
+      const cards = j.recipes.map((r,i) => `
+        <div class="recipe-card">
+          <h5>Recipe ${i+1}<br><small>(Err ${r.error.toFixed(2)})</small></h5>
+          <div style="display:flex;gap:.5rem;justify-content:center" class="mb-2">
+            <div>
+              <div class="swatch-block" style="background:rgb(${hidden.value})"></div>
+              <small>Target</small>
+            </div>
+            <div>
+              <div class="swatch-block" style="background:rgb(${r.mix})"></div>
+              <small>Mixed</small>
+            </div>
+          </div>
+          <ul>${r.recipe.map(x => `<li>${x.name}: ${x.perc}%</li>`).join('')}</ul>
+        </div>`).join('');
+
+      output.innerHTML = `<div class="recipes-row">${cards}</div>`;
+    } catch(err){
+      alert(err.message);
+    } finally {
+      genBtn.disabled = false;
+      genBtn.textContent = 'Generate Recipe';
+    }
+  });
+});
+</script>
 {% endblock %}
