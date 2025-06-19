@@ -461,65 +461,112 @@ def download_oil():
         return send_file(path, as_attachment=True)
     # nothing to download → bounce back to the page
     return redirect(url_for("oil_painting_page"))
-
 @app.route("/oil_painting", methods=["GET", "POST"])
 def oil_painting_page():
     """
     GET  → show the form (and maybe the last result preview)
-    POST → run oil-paint *only* if action=generate
+    POST → either run oil-paint or generate paint recipes, depending on `action`
     """
-    error              = None
-    result_image_data  = None
-    intensity          = int(request.form.get("intensity", 10))
+    error                 = None
+    original_image_data   = None
+    result_image_data     = None
+    intensity             = int(request.form.get("intensity", 10))
 
-    # ───────────── process only when user clicked Generate ────────────
-    if request.method == "POST" and request.form.get("action") == "generate":
+    # For the recipe generator
+    selected_recipe_color = None
+    recipe_results        = None
+    # Load available colour DB names once
+    db_list               = list(parse_color_db(read_color_file("color.txt")).keys())
 
-        # ---------- choose source image ----------
+    # ─── PART A: Oil‐paint generation ──────────────────────────────────
+    # Triggered when action!="generate_recipe"
+    if request.method == "POST" and request.form.get("action") != "generate_recipe":
         img_bgr = None
+        # 1. New upload?
         file = request.files.get("oil_image")
-
-        if file and file.filename:                                   # a new upload
-            img_bgr, path, error = save_and_decode(file,
-                                                   subdir="oil_painting")
-            if img_bgr is not None:
+        if file and file.filename:
+            img_bgr, path, err = save_and_decode(file, subdir="oil_painting")
+            if err:
+                error = err
+            else:
                 session["shared_img_path"] = path
-
-        else:                                                         # reuse shared
-            path = session.get("shared_img_path")
-            if path and os.path.exists(path):
-                img_bgr = cv2.imread(path)
+        # 2. Reuse shared image
+        if img_bgr is None and error is None:
+            shared_path = session.get("shared_img_path")
+            if shared_path and os.path.exists(shared_path):
+                img_bgr = cv2.imread(shared_path)
             else:
                 error = "Please upload an image first (e.g. on the Foogle-Man page)."
 
-        # ---------- run the filter ----------
+        # 3. Encode previews & run filter
         if img_bgr is not None and error is None:
+            # stash original preview
+            buf = BytesIO()
+            orig_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            Image.fromarray(orig_rgb).save(buf, format="PNG")
+            original_image_data = base64.b64encode(buf.getvalue()).decode()
+
+            # run the oil filter
             try:
-                painted   = oil_main(img_bgr, intensity)
-                painted   = (painted * 255).astype(np.uint8)
-                rgb_img   = cv2.cvtColor(painted, cv2.COLOR_BGR2RGB)
+                painted = oil_main(img_bgr, intensity)
+                painted = (painted * 255).astype(np.uint8)
+                rgb_img = cv2.cvtColor(painted, cv2.COLOR_BGR2RGB)
 
                 buf = BytesIO()
                 Image.fromarray(rgb_img).save(buf, format="PNG")
                 result_image_data = base64.b64encode(buf.getvalue()).decode()
 
-                tmp = os.path.join(app.config["UPLOAD_FOLDER"],
-                                   f"oil_painting_{os.getpid()}.png")
-                with open(tmp, "wb") as f: f.write(buf.getvalue())
-                session["oil_path"] = tmp
+                # store for download
+                tmp_name = f"oil_painting_{os.getpid()}.png"
+                tmp_path = os.path.join(app.config["UPLOAD_FOLDER"], tmp_name)
+                with open(tmp_path, "wb") as f:
+                    f.write(buf.getvalue())
+                session["oil_path"] = tmp_path
 
             except Exception as e:
                 error = f"Error generating oil painting: {e}"
 
-    # ───────────── render ─────────────
+    # ─── PART B: Paint‐recipe generation ───────────────────────────────
+    # Triggered when action=="generate_recipe"
+    if request.method == "POST" and request.form.get("action") == "generate_recipe":
+        sel = request.form.get("selected_color", "")
+        try:
+            r, g, b = map(int, sel.split(","))
+            selected_recipe_color = (r, g, b)
+        except Exception:
+            error = "Invalid RGB — click the oil-painted image to pick a colour."
+        else:
+            try:
+                step = float(request.form.get("step", 10.0))
+            except ValueError:
+                step = 10.0
+            db_choice = request.form.get("db_choice", db_list[0])
+            if db_choice not in db_list:
+                error = f"Unknown colour DB “{db_choice}”."
+            else:
+                full_txt   = read_color_file("color.txt")
+                all_dbs    = parse_color_db(full_txt)
+                base_dict  = {name: tuple(rgb) for name, rgb in all_dbs[db_choice]}
+                recipe_results = generate_recipes(
+                    selected_recipe_color,
+                    base_dict,
+                    step=step
+                )
+
+    # ─── Render everything to the template ─────────────────────────────
     return render_template(
         "oil_painting.html",
-        error             = error,
-        result_image_data = result_image_data,
-        intensity         = intensity,
-        active_page       = "oil_painting",
-        shared_img_exists = bool(session.get("shared_img_path")),
+        error                 = error,
+        original_image_data   = original_image_data,
+        result_image_data     = result_image_data,
+        intensity             = intensity,
+        shared_img_exists     = bool(session.get("shared_img_path")),
+        db_list               = db_list,
+        selected_recipe_color = selected_recipe_color,
+        recipe_results        = recipe_results,
+        active_page           = "oil_painting",
     )
+
 
 @app.route("/colour_merger", methods=["GET", "POST"])
 def colour_merger_page():
