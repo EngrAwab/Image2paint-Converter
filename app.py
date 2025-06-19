@@ -496,7 +496,7 @@ def oil_painting_page():
             if shared_path and os.path.exists(shared_path):
                 img_bgr = cv2.imread(shared_path)
             else:
-                error = "Please upload an image first (e.g. on the Foogle-Man page)."
+                error = "ERROR"
 
         # 3. Encode previews & run filter
         if img_bgr is not None and error is None:
@@ -774,91 +774,87 @@ def allowed_file(filename):
 
 
 def get_db_list():
-    
+    # return just the list of DB names
     full_txt = read_color_file("color.txt")
-    databases = parse_color_db(full_txt) 
-    return databases
-# ────────────────────────────────────────────────────────────────────
-#  FOOGLE-MAN REPO  (image-to-art + paint-recipe generator)
-# ────────────────────────────────────────────────────────────────────
+    all_dbs  = parse_color_db(full_txt)    # returns { name: [...], … }
+    return list(all_dbs.keys())
+
+
 @app.route("/foogle_man_repo", methods=["GET", "POST"])
 def foogle_man_repo_page():
-    # ✧ 1. Variables for the art-generation tab
-    original_b64  = None          # <img src> for the original upload
-    generated_b64 = None          # <img src> for the generated art
-    download_url  = None          # data: URL to download generated art
-    num_shapes    = 0             # shown under the preview
+    # ✧ 1. Art‐generation tab
+    original_b64   = None
+    generated_b64  = None
+    download_url   = None
+    num_shapes     = 0
 
-    # ✧ 2. Variables for the paint-recipe tab
-    error               = None
-    recipe_results      = None    # list of (recipe, mixedRGB, err)
-    selected_recipe_rgb = None
-    db_list             = get_db_list()   # names of colour DBs
+    # ✧ 2. Paint‐recipe tab
+    error                  = None
+    recipe_results         = None     # list of (recipe, mixedRGB, err)
+    selected_recipe_color  = None     # rename here
+    db_list                = get_db_list()
 
-    # ───────────────────────────────────────────────────────────
-    #                POST  (either branch)
-    # ───────────────────────────────────────────────────────────
     if request.method == "POST":
-
-        # ── A.  Paint-recipe branch  ───────────────────────────
+        # ── A) Paint‐recipe branch ───────────────────────────
         if request.form.get("action") == "generate_recipe":
-            sel = request.form.get("selected_color", "")
+            sel = request.form.get("selected_color", "").strip()
             try:
-                r, g, b = [int(x.strip()) for x in sel.split(",")]
-                selected_recipe_rgb = (r, g, b)
-            except ValueError:
+                r, g, b = [int(x) for x in sel.split(",")]
+                selected_recipe_color = (r, g, b)
+            except Exception:
                 error = "Invalid RGB — click the art to pick a colour."
             else:
                 try:
                     step = float(request.form.get("step", 10.0))
                 except ValueError:
                     step = 10.0
-                db_choice = request.form.get("db_choice", db_list[0])
 
+                db_choice = request.form.get("db_choice", db_list[0])
                 if db_choice not in db_list:
                     error = f"Unknown colour DB “{db_choice}”."
                 else:
-                    full_txt  = read_color_file("color.txt")
-                    all_dbs   = parse_color_db(full_txt)
-                    base_dict = {n: tuple(rgb) for n, rgb in all_dbs[db_choice]}
+                    full_txt   = read_color_file("color.txt")
+                    all_dbs    = parse_color_db(full_txt)
+                    base_dict  = {n: tuple(rgb) for n, rgb in all_dbs[db_choice]}
 
-                    recipe_results = generate_recipes(selected_recipe_rgb,
-                                                      base_dict,
-                                                      step=step)
+                    recipe_results = generate_recipes(
+                        selected_recipe_color,
+                        base_dict,
+                        step=step
+                    )
 
-        # ── B.  Image-to-art branch (Circles / Rect / Tri) ─────
+        # ── B) Image‐to‐art branch ────────────────────────────
         else:
             img_bgr = None
             file    = request.files.get("image")
 
-            # B-1. New upload?
+            # B1: New upload?
             if file and file.filename:
                 img_bgr, path, err = save_and_decode(file, subdir="foogle_man")
                 if err:
                     error = err
                 else:
-                    session["shared_img_path"] = path          # remember upload
+                    session["shared_img_path"] = path
 
-            # B-2. No file → fall back to shared path
-            if img_bgr is None and error is None:
+            # B2: Reuse shared
+            if img_bgr is None and not error:
                 path = session.get("shared_img_path")
                 if path and os.path.exists(path):
                     img_bgr = cv2.imread(path)
                 else:
                     error = "Please upload an image first (on any page)."
 
-            # B-3. Continue only if we now have an image
-            if img_bgr is not None and error is None:
-                # read form params
+            # B3: Generate art
+            if img_bgr is not None and not error:
                 shape_type = request.form.get("shape_type", "Circles")
                 min_size   = int(request.form.get("min_size", 5))
                 max_size   = int(request.form.get("max_size", 30))
                 num_shapes = int(request.form.get("num_shapes", 100))
                 block_size = (min_size + max_size) // 5
 
-                # generate pixelated base + random shapes
                 proc, scale = resize_for_processing(img_bgr)
                 pix         = pixelate_image(proc, block_size)
+
                 if shape_type == "Circles":
                     art = draw_random_circles(pix, min_size, max_size, num_shapes)
                 elif shape_type == "Rectangles":
@@ -866,43 +862,45 @@ def foogle_man_repo_page():
                 else:
                     art = draw_random_triangles(pix, min_size, max_size, num_shapes)
 
-                if scale < 1.0:      # upscale back to original size
-                    art = cv2.resize(art, (img_bgr.shape[1], img_bgr.shape[0]),
-                                     interpolation=cv2.INTER_LINEAR)
+                if scale < 1.0:
+                    art = cv2.resize(
+                        art,
+                        (img_bgr.shape[1], img_bgr.shape[0]),
+                        interpolation=cv2.INTER_LINEAR
+                    )
 
-                # base64-encode previews
+                # original preview
                 buf = BytesIO()
-                Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-                               ).save(buf, format="PNG")
+                Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))\
+                     .save(buf, format="PNG")
                 original_b64 = base64.b64encode(buf.getvalue()).decode()
 
+                # generated preview
                 buf = BytesIO()
-                Image.fromarray(cv2.cvtColor(art, cv2.COLOR_BGR2RGB)
-                               ).save(buf, format="PNG")
+                Image.fromarray(cv2.cvtColor(art, cv2.COLOR_BGR2RGB))\
+                     .save(buf, format="PNG")
                 generated_b64 = base64.b64encode(buf.getvalue()).decode()
 
                 download_url = f"data:image/png;base64,{generated_b64}"
 
-    # ───────────────────────────────────────────────────────────
-    #                Render template
-    # ───────────────────────────────────────────────────────────
+    # ─── Render ───────────────────────────────────────────────
     return render_template(
         "foogle_man_repo.html",
 
         # art tab
-        original_image  = original_b64,
-        generated_image = generated_b64,
-        num_shapes      = num_shapes,
-        download_url    = download_url,
+        original_image    = original_b64,
+        generated_image   = generated_b64,
+        num_shapes        = num_shapes,
+        download_url      = download_url,
 
         # recipe tab
-        error               = error,
-        db_list             = db_list,
-        selected_recipe_rgb = selected_recipe_rgb,
-        recipe_results      = recipe_results,
+        error                   = error,
+        db_list                 = db_list,
+        selected_recipe_color   = selected_recipe_color,  # pass to HTML
+        recipe_results          = recipe_results,
 
-        # shared-image flag for hiding the picker in HTML
-        shared_img_exists   = bool(session.get("shared_img_path")),
+        # shared‐image flag
+        shared_img_exists = bool(session.get("shared_img_path")),
     )
 
 

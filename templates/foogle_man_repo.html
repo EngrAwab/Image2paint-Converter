@@ -15,104 +15,55 @@
       margin-bottom: 1.5rem;
     }
     .controls-row .form-control,
-    .controls-row select {
-      width: auto;
-    }
+    .controls-row select { width: auto; }
 
-    /* ─── Click‐to‐sample prompt & swatch (hidden until art exists) ─ */
-    #clickBox {
-      display: none;
-      text-align: center;
-      font-family: monospace;
-      padding: 0.5rem 1rem;
-      margin: 1rem auto 0;
-      border: 1px solid #ccc;
-      border-radius: 0.5rem;
-      max-width: 240px;
-    }
-    #colorSwatch {
-      display: none;
-      width: 40px;
-      height: 40px;
-      border: 1px solid #000;
-      border-radius: 4px;
-      margin: 0.5rem auto;
-    }
-
-    /* ─── Image display ───────────────────────────────────────── */
+    /* ─── Image display ───────────────────────────────────── */
     .image-row {
       display: flex;
       justify-content: center;
       gap: 2rem;
       margin-top: 2rem;
+      flex-wrap: wrap;
     }
-    .image-block {
-      text-align: center;
-    }
+    .image-block { text-align: center; }
     .image-block img {
-      max-width: 100%;
-      height: auto;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      padding: 4px;
-      cursor: crosshair;
-    }
-    /* container for generated art sampling */
-    #generatedContainer {
-      display: inline-block;
-      position: relative;
+      max-width: 100%; height: auto; border: 1px solid #ddd;
+      border-radius: 4px; padding: 4px; cursor: crosshair;
     }
 
-    /* ─── Paint Recipe Grid & Cards ───────────────────────────── */
-    #recipeResults {
-      width: 100%;
-      padding: 1rem 0;
-    }
-    #recipeResults h3 {
-      text-align: center;
-      font-weight: 500;
-      margin-bottom: 1rem;
-    }
-    #recipeResults .recipes-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem;
-      justify-content: space-between;
+    /* ─── Paint-Recipe grid & cards ───────────────────────── */
+    .recipes-row {
+      display: flex; flex-wrap: wrap; gap: 1rem;
+      justify-content: space-between; margin-top: 1rem;
     }
     .recipe-card {
       flex: 1 1 calc(33.333% - 1rem);
       max-width: calc(33.333% - 1rem);
-      border: 1px solid #ddd;
-      border-radius: 0.5rem;
-      padding: 1rem;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+      border: 1px solid #ddd; border-radius: 0.5rem;
+      padding: 1rem; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
       background: #fff;
     }
     .recipe-card h5 {
-      margin: 0 0 0.5rem;
-      font-size: 1.1rem;
-      text-align: center;
+      margin: 0 0 0.5rem; font-size: 1.1rem; text-align: center;
     }
-    .recipe-card small { color: #666; }
     .recipe-card .swatches {
-      display: flex;
-      justify-content: center;
-      gap: 0.5rem;
-      margin: 0.5rem 0;
+      display: flex; justify-content: center;
+      gap: 0.5rem; margin: 0.5rem 0;
     }
     .recipe-card .swatch-block {
-      width: 40px;
-      height: 40px;
-      border: 1px solid #aaa;
+      width: 40px; height: 40px; border: 1px solid #aaa;
       border-radius: 4px;
     }
-    .recipe-card ul {
-      padding-left: 1.2rem;
-      margin: 0.5rem 0 0;
-    }
+    .recipe-card ul { padding-left: 1.2rem; margin: 0.5rem 0 0; }
   </style>
 
-  <form method="post" enctype="multipart/form-data" class="foogle-form">
+  <!-- ─── ART-GENERATION FORM ─────────────────────────────────── -->
+  <form method="post"
+        action="{{ url_for('foogle_man_repo_page') }}"
+        enctype="multipart/form-data"
+        class="foogle-form">
+    <input type="hidden" name="action" value="generate_art">
+
     <div class="controls-row">
       <div class="form-group">
         <label for="shape_type">Shape Type</label>
@@ -124,48 +75,65 @@
       </div>
       <div class="form-group">
         <label for="min_size">Min Size/Radius</label>
-        <input type="number" id="min_size" name="min_size" value="5" min="1" class="form-control"/>
+        <input type="number" id="min_size" name="min_size"
+               value="5" min="1" class="form-control">
       </div>
       <div class="form-group">
         <label for="max_size">Max Size/Radius</label>
-        <input type="number" id="max_size" name="max_size" value="10" min="1" class="form-control"/>
+        <input type="number" id="max_size" name="max_size"
+               value="10" min="1" class="form-control">
       </div>
       <div class="form-group">
         <label for="num_shapes">Number of Shapes</label>
-        <input type="number" id="num_shapes" name="num_shapes" value="100" min="1" class="form-control"/>
+        <input type="number" id="num_shapes" name="num_shapes"
+               value="100" min="1" class="form-control">
       </div>
     </div>
 
     <div class="controls-row">
-      <input type="file" id="image" name="image"
-             accept="image/png, image/jpeg, image/webp" hidden required>
-      <button type="button" class="btn btn-primary"
-              onclick="document.getElementById('image').click()">
-        Upload Image
-      </button>
-      <button type="submit" class="btn btn-primary">Generate</button>
-      {% if download_url %}
-        <button type="button" class="btn btn-primary"
-                onclick="window.location.href='{{ download_url }}'">
-          Download Art
-        </button>
-      {% endif %}
-    </div>
+  <!-- Generate Button -->
+  <button type="submit" class="btn btn-primary">Generate</button>
+
+  <!-- Download Art as a real button -->
+  {% if download_url %}
+    <button
+      type="button"
+      class="btn btn-primary"
+      onclick="(function(){
+        const a = document.createElement('a');
+        a.href = '{{ download_url }}';
+        a.download = 'foogle_art.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      })()"
+    >
+      Download Art
+    </button>
+  {% endif %}
+</div>
+
   </form>
 
+  <!-- Immediate Preview of the Uploaded Image -->
+  <div id="uploadPreviewContainer" class="image-row" style="display:none;">
+    <div class="image-block">
+      <h2>Selected Image</h2>
+      <img id="uploadPreview" alt="Selected preview">
+    </div>
+  </div>
+
+  <!-- ─── Server-side previews ─────────────────────────────────── -->
   {% if original_image %}
     <div class="image-row">
       <div class="image-block">
         <h2>Original Image</h2>
-        <img src="data:image/png;base64,{{ original_image }}" alt="Original" />
+        <img src="data:image/png;base64,{{ original_image }}" alt="Original">
       </div>
-
       {% if generated_image %}
-        <div class="image-block">
+        <div class="image-block" id="generatedContainer">
           <h2>Generated Art</h2>
-          <div id="generatedContainer">
-            <img src="data:image/png;base64,{{ generated_image }}" alt="Generated Art" />
-          </div>
+          <img src="data:image/png;base64,{{ generated_image }}" alt="Generated Art">
           <div id="clickBox">Click on the generated art to sample RGB</div>
           <div id="colorSwatch"></div>
           <p class="mt-2">Shapes Added: {{ num_shapes }}</p>
@@ -175,139 +143,137 @@
   {% endif %}
 
   <hr class="my-4">
+
+  <!-- ─── PAINT-RECIPE GENERATOR ───────────────────────────────── -->
   <h3 class="mb-3">🎨 Paint Recipe Generator</h3>
   <form id="recipeForm" class="mb-4">
     <input type="hidden" name="action" value="generate_recipe">
     <input type="hidden" id="selectedColorInput" name="selected_color">
-    <input type="hidden" name="shape_detect" value="Rectangle">
-    <input type="hidden" name="min_size" value="3">
-    <input type="hidden" name="max_size" value="10">
-    <div class="row g-2 align-items-center">
-      <div class="col-md-4">
-        <label class="form-label">Colour DB</label>
-        <select name="db_choice" class="form-select" required>
-          {% for db in db_list %}<option value="{{ db }}">{{ db }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="col-md-4">
-        <label class="form-label">Precision (step %)</label>
-        <input type="number" name="step" class="form-control"
-               min="1" max="50" step="0.5" value="10.0" required>
-      </div>
-      <div class="col-md-2">
-        <label class="form-label">Picked RGB</label>
-        <input type="text" id="rgbDisplay" class="form-control" readonly>
-      </div>
-      <div class="col-md-2 text-end">
-        <label>&nbsp;</label><br>
-        <button id="generateBtn" class="btn btn-success w-100" disabled>
-          Generate
-        </button>
-      </div>
+
+    <label class="form-label">Colour DB</label>
+    <select name="db_choice" class="form-select" required>
+      {% for db in db_list %}
+        <option value="{{ db }}">{{ db }}</option>
+      {% endfor %}
+    </select>
+
+    <label class="form-label">Precision (step %)</label>
+    <input type="number" name="step" class="form-control"
+           min="1" max="50" step="0.5" value="10.0" required>
+
+    <label class="form-label">Picked RGB</label>
+    <input type="text" id="rgbDisplay" class="form-control" readonly>
+
+    <div class="text-end" style="margin-top:1rem;">
+      <button id="generateBtn" class="btn btn-success" disabled>
+        Generate Recipe
+      </button>
     </div>
   </form>
+
   <div id="recipeResults"></div>
 {% endblock %}
 
 {% block extra_js %}
-  <script>
-    // create hidden canvas for sampling
-    const rgbCanvas = document.createElement('canvas');
-    rgbCanvas.style.display = 'none';
-    document.body.appendChild(rgbCanvas);
-    const rgbCtx = rgbCanvas.getContext('2d');
-
-    document.addEventListener('DOMContentLoaded', () => {
-      const genContainer  = document.getElementById('generatedContainer');
-      const clickBox      = document.getElementById('clickBox');
-      const colorSwatch   = document.getElementById('colorSwatch');
-      const rgbDisplay    = document.getElementById('rgbDisplay');
-      const selectedInput = document.getElementById('selectedColorInput');
-      const generateBtn   = document.getElementById('generateBtn');
-
-      // show prompt & swatch only if generated art exists
-      if (genContainer && genContainer.querySelector('img')) {
-        clickBox.style.display    = 'block';
-        colorSwatch.style.display = 'block';
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // ---- upload preview ----
+  const imageInput = document.getElementById('image');
+  const uploadPrev = document.getElementById('uploadPreview');
+  const uploadCont = document.getElementById('uploadPreviewContainer');
+  if (imageInput) {
+    imageInput.addEventListener('change', ev => {
+      const file = ev.target.files[0];
+      if (!file) {
+        uploadCont.style.display = 'none';
+        return;
       }
-
-      // sampling handler for generated art only
-      genContainer && genContainer.addEventListener('click', ev => {
-        const img = genContainer.querySelector('img');
-        if (!img) return;
-        const rect = img.getBoundingClientRect();
-        const xCss = ev.clientX - rect.left;
-        const yCss = ev.clientY - rect.top;
-        const ix   = Math.floor(xCss * img.naturalWidth / img.clientWidth);
-        const iy   = Math.floor(yCss * img.naturalHeight / img.clientHeight);
-
-        rgbCanvas.width  = img.naturalWidth;
-        rgbCanvas.height = img.naturalHeight;
-        rgbCtx.drawImage(img, 0, 0);
-        const [r, g, b] = rgbCtx.getImageData(ix, iy, 1, 1).data;
-
-        const rgbStr = `RGB(${r}, ${g}, ${b}) at (${ix},${iy})`;
-        clickBox.textContent = rgbStr;
-        const numeric = `${r}, ${g}, ${b}`;
-        rgbDisplay.value     = numeric;
-        selectedInput.value  = numeric;
-
-        // update swatch background
-        colorSwatch.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
-        generateBtn.disabled = false;
-      });
-
-      // AJAX paint-recipe submission
-      document.getElementById('recipeForm')
-        .addEventListener('submit', async ev => {
-          ev.preventDefault();
-          if (generateBtn.disabled) return;
-          generateBtn.disabled    = true;
-          generateBtn.textContent = 'Generating…';
-
-          try {
-            const res = await fetch('/foogle_man_repo', {
-              method: 'POST',
-              body: new FormData(ev.target)
-            });
-            const j = await res.json();
-            if (!j.ok) throw new Error(j.msg || 'Server error');
-
-            const cards = j.recipes.map((r,i) => `
-              <div class="recipe-card">
-                <h5>Recipe ${i+1}<br><small>(Err ${r.error.toFixed(2)})</small></h5>
-                <div class="swatches">
-                  <div>
-                    <div class="swatch-block" style="background:rgb(${selectedInput.value})"></div>
-                    <small>Target</small>
-                  </div>
-                  <div>
-                    <div class="swatch-block" style="background:rgb(${r.mix})"></div>
-                    <small>Mixed</small>
-                  </div>
-                </div>
-                <ul>
-                  ${r.recipe.map(x => `<li>${x.name}: ${x.perc}%</li>`).join('')}
-                </ul>
-              </div>
-            `).join('');
-
-            document.getElementById('recipeResults').innerHTML = `
-              <h3>Top Recipes (Target RGB: ${selectedInput.value})</h3>
-              <div class="recipes-row">${cards}</div>
-            `;
-          } catch (err) {
-            alert(err.message);
-          } finally {
-            generateBtn.disabled    = false;
-            generateBtn.textContent = 'Generate';
-          }
-        });
+      const reader = new FileReader();
+      reader.onload = e => {
+        uploadPrev.src           = e.target.result;
+        uploadCont.style.display = 'flex';
+      };
+      reader.readAsDataURL(file);
     });
-  </script>
+  }
 
-  <!-- external bundles -->
-  <script src="{{ url_for('static', filename='js/wNumb.min.js') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/nouislider.min.js') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/ui_bridge.js') }}" defer></script>
+  // ---- recipe + sampling logic ----
+  const genContainer  = document.getElementById('generatedContainer');
+  if (!genContainer) return;
+
+  const clickBox      = document.getElementById('clickBox');
+  const colorSwatch   = document.getElementById('colorSwatch');
+  const rgbDisplay    = document.getElementById('rgbDisplay');
+  const selectedInput = document.getElementById('selectedColorInput');
+  const genBtn        = document.getElementById('generateBtn');
+  const form          = document.getElementById('recipeForm');
+  const output        = document.getElementById('recipeResults');
+  const img           = genContainer.querySelector('img');
+
+  // off-screen canvas
+  const cv  = document.createElement('canvas'),
+        ctx = cv.getContext('2d');
+  const sync = () => {
+    cv.width  = img.naturalWidth;
+    cv.height = img.naturalHeight;
+    ctx.drawImage(img, 0, 0);
+    clickBox.style.display    = 'block';
+    colorSwatch.style.display = 'block';
+  };
+  img.complete ? sync() : img.addEventListener('load', sync, { once:true });
+
+  // click-to-sample
+  genContainer.addEventListener('click', ev => {
+    const rect = img.getBoundingClientRect();
+    const x    = Math.floor((ev.clientX - rect.left)  * img.naturalWidth  / img.clientWidth);
+    const y    = Math.floor((ev.clientY - rect.top)   * img.naturalHeight / img.clientHeight);
+    const [r,g,b] = ctx.getImageData(x, y, 1, 1).data;
+    const rgbStr  = `${r},${g},${b}`;
+    rgbDisplay.value             = selectedInput.value = rgbStr;
+    colorSwatch.style.backgroundColor = `rgb(${rgbStr})`;
+    genBtn.disabled             = false;
+  });
+
+  // AJAX recipe request → /generate_recipe
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (genBtn.disabled) return;
+    genBtn.disabled    = true;
+    genBtn.textContent = 'Generating…';
+
+    try {
+      const res = await fetch('/generate_recipe', {
+        method: 'POST',
+        body: new FormData(form)
+      });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.msg || 'Server error');
+
+      const cards = j.recipes.map((r,i) => `
+        <div class="recipe-card">
+          <h5>Recipe ${i+1}<br><small>(Err ${r.error.toFixed(2)})</small></h5>
+          <div class="swatches">
+            <div>
+              <div class="swatch-block" style="background:rgb(${selectedInput.value})"></div>
+              <small>Target</small>
+            </div>
+            <div>
+              <div class="swatch-block" style="background:rgb(${r.mix})"></div>
+              <small>Mixed</small>
+            </div>
+          </div>
+          <ul>${r.recipe.map(x=>`<li>${x.name}: ${x.perc}%</li>`).join('')}</ul>
+        </div>
+      `).join('');
+
+      output.innerHTML = `<div class="recipes-row">${cards}</div>`;
+    } catch(err) {
+      alert(err.message);
+    } finally {
+      genBtn.disabled    = false;
+      genBtn.textContent = 'Generate Recipe';
+    }
+  });
+});
+</script>
 {% endblock %}
