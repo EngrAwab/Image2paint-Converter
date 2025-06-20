@@ -4,6 +4,11 @@ $hx_exports["geometrize"]["bitmap"] = $hx_exports["geometrize"]["bitmap"] || {};
 ;$hx_exports["geometrize"]["exporter"] = $hx_exports["geometrize"]["exporter"] || {};
 ;$hx_exports["geometrize"]["runner"] = $hx_exports["geometrize"]["runner"] || {};
 ;$hx_exports["geometrize"]["shape"] = $hx_exports["geometrize"]["shape"] || {};
+window.resetGeometrizer = function() {
+	if (window.geomMain && typeof geomMain.onTargetImageChanged === 'function') {
+	  geomMain.onTargetImageChanged();
+	}
+  };
 function $extend(from, fields) {
 	var proto = Object.create(from);
 	for (var name in fields) proto[name] = fields[name];

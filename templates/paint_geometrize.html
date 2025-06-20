@@ -124,8 +124,7 @@
   <!-- CONTROLS -->
   <div id="controls">
     <input type="file" id="openimageinput" accept="image/*" hidden>
-    <button id="openimagebutton" class="button"
-            onclick="openImage()">📂 Open Image</button>
+    <button id="openimagebutton" class="button" onclick="openImage()">📂 Open Image</button>
     <button id="settings-toggle" class="button">⚙️ Settings</button>
     <button id="resetbutton" class="button">🔄 Reset</button>
     <button id="runpausebutton" class="button">🟢 Run</button>
@@ -195,7 +194,7 @@
     <button id="svg2pngbutton" class="button">🖼️ SVG→PNG Preview</button>
   </div>
 
-&nbsp; &nbsp;
+  &nbsp; &nbsp;
 
   <hr class="my-4">
   <h3 class="mb-3">🎨 Paint Recipe Generator</h3>
@@ -229,90 +228,111 @@
 {% endblock %}
 
 {% block extra_js %}
-  <script>
-    // Hidden canvas for RGB sampling
-    const rgbCanvas = document.createElement('canvas');
-    rgbCanvas.style.display = 'none';
-    document.body.appendChild(rgbCanvas);
-    const rgbCtx = rgbCanvas.getContext('2d');
+<script>
+  let originalImageSrc = null;
 
-    function openImage() {
-      document.getElementById('openimageinput').click();
-    }
+  // Hidden canvas for RGB sampling
+  const rgbCanvas = document.createElement('canvas');
+  rgbCanvas.style.display = 'none';
+  document.body.appendChild(rgbCanvas);
+  const rgbCtx = rgbCanvas.getContext('2d');
 
-    document.addEventListener('DOMContentLoaded', () => {
-      const container      = document.getElementById('currentsvgcontainer');
-      const clickBox       = document.getElementById('clickBox');
-      const rgbDisplay     = document.getElementById('rgbDisplay');
-      const selectedInput  = document.getElementById('selectedColorInput');
-      const generateBtn    = document.getElementById('generateBtn');
+  function openImage() {
+    document.getElementById('openimageinput').click();
+  }
 
-      // File-picker → show image + reveal clickBox
-      document.getElementById('openimageinput')
-        .addEventListener('change', e => {
-          const file = e.target.files[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = evt => {
-            const img = new Image();
-            img.src = evt.target.result;
-            img.onload = () => {
-              container.innerHTML = '';
-              container.appendChild(img);
-              clickBox.style.display = 'block';
-            };
-          };
-          reader.readAsDataURL(file);
-        });
+  document.addEventListener('DOMContentLoaded', () => {
+    const container     = document.getElementById('currentsvgcontainer');
+    const clickBox      = document.getElementById('clickBox');
+    const rgbDisplay    = document.getElementById('rgbDisplay');
+    const selectedInput = document.getElementById('selectedColorInput');
+    const generateBtn   = document.getElementById('generateBtn');
+    const runBtn        = document.getElementById('runpausebutton');
+    const resetBtn      = document.getElementById('resetbutton');
 
-      // Settings accordion
-      document.getElementById('settings-toggle')
-        .addEventListener('click', () => {
-          const acc = document.getElementById('accordion');
-          acc.style.display = acc.style.display==='block' ? 'none' : 'block';
-          if (acc.style.display==='block') acc.scrollIntoView({behavior:'smooth',block:'start'});
-        });
-
-      // Reset → hide clickBox again
-      document.getElementById('resetbutton')
-        .addEventListener('click', () => {
-          container.querySelectorAll('img,svg').forEach(el => el.remove());
-          document.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
-          document.querySelectorAll('input[type=range]').forEach(slider => {
-            const def = slider.getAttribute('value') || slider.min || 0;
-            slider.value = def;
-            const lbl = document.getElementById(slider.id + '_label');
-            if (lbl) lbl.textContent = def;
-          });
-          clickBox.style.display = 'none';
+    // 1) File-picker → show image + save its data‑URL
+    document.getElementById('openimageinput').addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = evt => {
+        originalImageSrc = evt.target.result;
+        const img = new Image();
+        img.src = originalImageSrc;
+        img.onload = () => {
+          container.innerHTML = '';
+          container.appendChild(img);
+          clickBox.style.display = 'block';
           clickBox.textContent = 'Click on the image to sample RGB';
-          rgbDisplay.value     = '';
-          selectedInput.value  = '';
-          generateBtn.disabled = true;
-        });
+        };
+      };
+      reader.readAsDataURL(file);
+    });
 
-      // Click & sample RGB
-      container.addEventListener('click', ev => {
-        const img = container.querySelector('img');
-        if (!img) {
-          clickBox.textContent = 'No image to sample';
-          return;
-        }
-        const rect = img.getBoundingClientRect();
-        const xCss = ev.clientX - rect.left;
-        const yCss = ev.clientY - rect.top;
-        const ix   = Math.floor(xCss * img.naturalWidth / img.clientWidth);
-        const iy   = Math.floor(yCss * img.naturalHeight / img.clientHeight);
-        rgbCanvas.width  = img.naturalWidth;
-        rgbCanvas.height = img.naturalHeight;
-        rgbCtx.drawImage(img, 0, 0);
-        const [r, g, b] = rgbCtx.getImageData(ix, iy, 1, 1).data;
-        clickBox.textContent = `RGB(${r}, ${g}, ${b}) at (${ix},${iy})`;
-        const numeric = `${r}, ${g}, ${b}`;
-        rgbDisplay.value     = numeric;
-        selectedInput.value  = numeric;
-        generateBtn.disabled = false;
+    // 2) Settings accordion toggle
+    document.getElementById('settings-toggle').addEventListener('click', () => {
+      const acc = document.getElementById('accordion');
+      acc.style.display = acc.style.display === 'block' ? 'none' : 'block';
+      if (acc.style.display === 'block') acc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    // 3) Reset → pause, reset engine, restore original image & UI
+    resetBtn.onclick = () => {
+      // Pause if running
+      if (runBtn.textContent.includes('Pause')) runBtn.click();
+
+      // Reset geometrizer state
+      if (window.geomMain && typeof geomMain.onTargetImageChanged === 'function') {
+        geomMain.onTargetImageChanged();
+      }
+
+      // Restore original image
+      container.innerHTML = '';
+      if (originalImageSrc) {
+        const img = new Image();
+        img.src = originalImageSrc;
+        img.onload = () => {
+          container.appendChild(img);
+          clickBox.style.display = 'block';
+          clickBox.textContent = 'Click on the image to sample RGB';
+        };
+      }
+
+      // Reset UI controls
+      rgbDisplay.value     = '';
+      selectedInput.value  = '';
+      generateBtn.disabled = true;
+      document.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+      document.querySelectorAll('input[type=range]').forEach(slider => {
+        const def = slider.getAttribute('value') || slider.min || 0;
+        slider.value = def;
+        const lbl = document.getElementById(slider.id + '_label');
+        if (lbl) lbl.textContent = def;
       });
+    };
+
+    // 4) Click-to-sample RGB
+    container.addEventListener('click', ev => {
+      const img = container.querySelector('img');
+      if (!img) {
+        clickBox.textContent = 'No image to sample';
+        return;
+      }
+      const rect = img.getBoundingClientRect();
+      const xCss = ev.clientX - rect.left;
+      const yCss = ev.clientY - rect.top;
+      const ix   = Math.floor(xCss * img.naturalWidth / img.clientWidth);
+      const iy   = Math.floor(yCss * img.naturalHeight / img.clientHeight);
+      rgbCanvas.width  = img.naturalWidth;
+      rgbCanvas.height = img.naturalHeight;
+      rgbCtx.drawImage(img, 0, 0);
+      const [r, g, b] = rgbCtx.getImageData(ix, iy, 1, 1).data;
+      clickBox.textContent = `RGB(${r}, ${g}, ${b}) at (${ix},${iy})`;
+      const numeric = `${r}, ${g}, ${b}`;
+      rgbDisplay.value     = numeric;
+      selectedInput.value  = numeric;
+      generateBtn.disabled = false;
+    });
 
       // Save SVG
       document.getElementById('savesvgbutton').addEventListener('click', () => {
