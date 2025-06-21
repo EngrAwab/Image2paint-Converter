@@ -988,7 +988,29 @@ def ajax_generate_recipe():
     return jsonify(ok=True, recipes=payload)
 # ══════════════════════════════════════════
 
-    
+# Simple GET-style: /api/sum?a=3&b=5
+@app.route("/api/sum", methods=["GET"])
+def api_sum_get():
+    a = request.args.get("a", type=float)
+    b = request.args.get("b", type=float)
+    if a is None or b is None:
+        return jsonify(error="Please provide numeric 'a' and 'b' query parameters"), 400
+    return jsonify(sum=a + b)
+
+
+# JSON POST-style: POST /api/sum  { "a": 3, "b": 5 }
+@app.route("/api/sum", methods=["POST"])
+def api_sum_post():
+    data = request.get_json(silent=True)
+    if not data or "a" not in data or "b" not in data:
+        return jsonify(error="Please send JSON with 'a' and 'b' fields"), 400
+    try:
+        a = float(data["a"])
+        b = float(data["b"])
+    except (TypeError, ValueError):
+        return jsonify(error="'a' and 'b' must be numbers"), 400
+    return jsonify(sum=a + b)
+
 # ─────────── MAIN ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))  # Get port from environment (Render sets this)
