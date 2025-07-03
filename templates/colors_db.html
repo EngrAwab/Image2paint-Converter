@@ -3,6 +3,7 @@
   <h1 class="page-title">📚 Color Databases</h1>
 
   {% if message %}
+    {# Display success or error messages passed from the backend #}
     <div class="message {{ message[0] }}">{{ message[1] }}</div>
   {% endif %}
 
@@ -53,7 +54,7 @@
       border-color: var(--btn-active-bg);
     }
 
-    /* maintain the swatch styles from before */
+    /* swatch styles */
     .swatch-wrapper { display: flex; align-items: center; margin-bottom: 1.5rem; }
     .swatch-arrow {
       cursor: pointer; user-select: none;
@@ -71,11 +72,22 @@
     .db-swatch-line::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
     .swatch-item { flex: 0 0 auto; text-align: center; }
     .color-block {
-      width: 80px; height: 80px; border: 1px solid #ccc;
-      border-radius: 4px; margin-bottom: .25rem;
+      width: 100px; /* Increased width for better text fit */
+      height: 80px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      margin-bottom: .25rem;
+      /* ++ MODIFIED STYLES ++ */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: bold;
+      font-family: monospace;
+      /* -- END MODIFIED STYLES -- */
     }
 
-    /* simple form styling */
+    /* form styling */
     .db-form { max-width: 400px; margin-top: 1rem; }
     .db-form label { display: block; margin-bottom: .5rem; }
     .db-form input[type="text"], .db-form select {
@@ -83,8 +95,15 @@
       border: 1px solid #ccc; border-radius: 4px;
     }
     .db-form button { margin-top: 1rem; }
+
+    /* Message styling */
+    .message { padding: 1rem; border-radius: 4px; margin-bottom: 1rem; }
+    .message.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .message.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .message.info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
   </style>
 
+  <!-- This form wrapper allows the top buttons to trigger a POST request -->
   <form method="post" action="{{ url_for('colors_db_page') }}">
     <div class="db-action-btn-container">
       <button name="action" value="browse" class="db-action-btn {% if subpage=='databases' %}active{% endif %}">
@@ -107,7 +126,7 @@
 
   {% if subpage == 'databases' %}
     {% if not databases %}
-      <p>This database file is empty.</p>
+      <p>This database file is empty. Use 'Create DB' to start a new one.</p>
     {% else %}
       {% for db_name, colors in databases.items() %}
         <h3>{{ db_name }}</h3>
@@ -117,12 +136,22 @@
           <div class="swatch-wrapper">
             <div class="swatch-arrow left">&lt;</div>
             <div class="db-swatch-line">
+              {# ++ MODIFIED LOOP ++ #}
               {% for name, rgb in colors %}
-                {% set hex = '#%02x%02x%02x'|format(rgb[0], rgb[1], rgb[2]) %}
-                <div class="swatch-item">
-                  <div class="color-block" style="background: {{ hex }};"></div>
+                {% set r, g, b = rgb %}
+                {% set hex = '#%02x%02x%02x'|format(r, g, b) %}
+                {# Calculate brightness to determine text color for contrast #}
+                {% set luma = (0.299*r + 0.587*g + 0.114*b) %}
+                {% set text_color = 'black' if luma > 128 else 'white' %}
+                <div class="swatch-item" title="{{ name }} ({{ hex }})">
+                  {# The RGB value is now inside the color block #}
+                  <div class="color-block" style="background: {{ hex }}; color: {{ text_color }};">
+                    {{ r }},{{ g }},{{ b }}
+                  </div>
+                  {# The color name span is removed #}
                 </div>
               {% endfor %}
+              {# -- END MODIFIED LOOP -- #}
             </div>
             <div class="swatch-arrow right">&gt;</div>
           </div>
@@ -146,13 +175,13 @@
           </label>
           <label>
             Color Name
-            <input type="text" name="color_name" placeholder="e.g. Sky Blue">
+            <input type="text" name="color_name" placeholder="e.g. Sky Blue" required>
           </label>
           <label>
             Hex Value
-            <input type="text" name="hex_value" placeholder="#RRGGBB">
+            <input type="text" name="hex_value" placeholder="#RRGGBB" required>
           </label>
-          <button type="submit">Add Color</button>
+          <button type="submit" class="db-action-btn">Add Color</button>
         </form>
       {% else %}
         <p><i>No databases exist yet. Create one first.</i></p>
@@ -169,27 +198,31 @@
             Database
             <select name="db_name" id="remove-db-select">
               {% for name in databases.keys() %}
-                <option value="{{ name }}">{{ name }}</option>
+                {# The 'selected' attribute keeps the dropdown on the chosen database after refresh #}
+                <option value="{{ name }}" {% if name == selected_db_name %}selected{% endif %}>
+                  {{ name }}
+                </option>
               {% endfor %}
             </select>
           </label>
-          <div id="color-checkboxes">
-            <!-- You’ll need a bit of JS to dynamically load colors for the chosen DB -->
-            {% if databases %}
-              {% set first = databases.keys()|list|first %}
-              {% for cname, rgb in databases[first] %}
-                <label>
+          <div id="color-checkboxes" style="margin-top: 1rem;">
+            {# Display colors for the *selected* database, not just the first one #}
+            {% if selected_db_name and selected_db_name in databases and databases[selected_db_name] %}
+              {% for cname, rgb in databases[selected_db_name] %}
+                <label style="display: block; margin-bottom: 0.25rem;">
                   <input type="checkbox" name="colors" value="{{ cname }}"> {{ cname }}
                 </label>
               {% endfor %}
+            {% else %}
+              <p><i>This database has no colors to remove.</i></p>
             {% endif %}
           </div>
-          <button type="submit">Remove Selected</button>
+          <button type="submit" class="db-action-btn">Remove Selected</button>
         </form>
         <script>
-          // On DB change, reload checkboxes via simple page reload
-          document.getElementById('remove-db-select').onchange = () => {
-            document.getElementById('remove-db-select').form.submit();
+          // On DB change, submit the form to reload the page with the correct color list
+          document.getElementById('remove-db-select').onchange = (e) => {
+            e.target.form.submit();
           };
         </script>
       {% else %}
@@ -204,9 +237,9 @@
         <input type="hidden" name="action" value="create_db">
         <label>
           Database Name
-          <input type="text" name="new_db_name" placeholder="e.g. MyPalette">
+          <input type="text" name="new_db_name" placeholder="e.g. MyPalette" required>
         </label>
-        <button type="submit">Create</button>
+        <button type="submit" class="db-action-btn">Create</button>
       </form>
     </div>
 
@@ -224,7 +257,7 @@
               {% endfor %}
             </select>
           </label>
-          <button type="submit">Delete</button>
+          <button type="submit" class="db-action-btn">Delete</button>
         </form>
       {% else %}
         <p><i>No databases exist yet.</i></p>
@@ -236,10 +269,12 @@
     // swatch scrolling
     document.querySelectorAll('.swatch-wrapper').forEach(wrapper => {
       const line = wrapper.querySelector('.db-swatch-line');
-      wrapper.querySelector('.swatch-arrow.left').onclick = () =>
-        line.scrollBy({ left: -150, behavior: 'smooth' });
-      wrapper.querySelector('.swatch-arrow.right').onclick = () =>
-        line.scrollBy({ left: 150, behavior: 'smooth' });
+      const leftArrow = wrapper.querySelector('.swatch-arrow.left');
+      const rightArrow = wrapper.querySelector('.swatch-arrow.right');
+      if(leftArrow && rightArrow && line) {
+        leftArrow.onclick = () => line.scrollBy({ left: -250, behavior: 'smooth' });
+        rightArrow.onclick = () => line.scrollBy({ left: 250, behavior: 'smooth' });
+      }
     });
   </script>
 {% endblock %}
