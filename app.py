@@ -2,13 +2,12 @@ import os
 import base64
 import itertools
 import math
+import json
 from io import BytesIO
+from time import sleep
 # at the top of app.py
 import colormixer as mixbox
-import os, re, base64, shutil, stat, tempfile, subprocess, platform, requests
-from typing import List
-from flask import Flask, request, jsonify, Response
-from PIL import Image
+
 import cv2
 import numpy as np
 from PIL import Image
@@ -17,6 +16,14 @@ from flask import (                       # ← jsonify appended
     session, redirect, url_for, send_file, jsonify
 )
 from werkzeug.utils import secure_filename
+
+# Selenium imports for headless browser automation
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
 
 # ─────────── Flask setup ─────────────────────────────────────────────
 app = Flask(
@@ -47,8 +54,8 @@ def allowed_file(filename: str) -> bool:
 
 def save_and_decode(file_storage, subdir: str = ""):
     """
-    • Validates extension  
-    • Saves the file into UPLOAD_FOLDER[/subdir]  
+    • Validates extension
+    • Saves the file into UPLOAD_FOLDER[/subdir]
     • Returns (img_bgr, path, error)  – exactly one of img_bgr / error will be None
     """
     if not file_storage or file_storage.filename == "":
@@ -78,9 +85,6 @@ def allowed_file(filename):
 
 # ─────────── Colour-database helpers ─────────────────────────────────
 def read_color_file(path: str = "color.txt") -> str:
-    # Ensure the file exists before trying to read it
-    if not os.path.exists(path):
-        open(path, 'w').close() # Create the file if it doesn't exist
     with open(path, encoding="utf8") as f:
         return f.read()
 
@@ -91,16 +95,13 @@ def parse_color_db(txt: str):
         line = line.strip()
         if not line:
             continue
-        # If line does not start with a digit, it's a database name
         if not line[0].isdigit():
             cur = line
             dbs[cur] = []
-        # Otherwise, it's a color entry
         else:
             tok = line.split()
             if len(tok) < 3:
                 continue
-            # The RGB value is always the second to last token
             parts = tok[-2].split(",")
             if len(parts) != 3:
                 continue
@@ -108,38 +109,9 @@ def parse_color_db(txt: str):
                 r, g, b = map(int, parts)
             except ValueError:
                 continue
-            # The name is everything between the first and second-to-last token
             name = " ".join(tok[1:-2])
-            if cur is not None:
-                dbs[cur].append((name, (r, g, b)))
+            dbs[cur].append((name, (r, g, b)))
     return dbs
-
-# +++ START OF ADDED/MODIFIED CODE +++
-
-def write_color_db(databases, path: str = "color.txt"):
-    """Writes the databases dictionary back to the file in the correct format."""
-    with open(path, "w", encoding="utf8") as f:
-        db_items = list(databases.items())
-        for i, (db_name, colors) in enumerate(db_items):
-            f.write(f"{db_name}\n")
-            # The original file has a number at the start and end of color lines.
-            # We'll replicate that. The last number seems arbitrary, so we use 1000.
-            for j, (color_name, rgb) in enumerate(colors):
-                r, g, b = rgb
-                f.write(f"{j+1} {color_name} {r},{g},{b} 1000\n")
-            # Add a blank line between databases, but not after the last one
-            if i < len(db_items) - 1:
-                f.write("\n")
-
-def hex_to_rgb(hex_str: str):
-    """Converts a hex color string (e.g., '#RRGGBB') to an (r, g, b) tuple."""
-    hex_str = hex_str.lstrip('#')
-    if len(hex_str) != 6:
-        return None
-    try:
-        return tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
-    except ValueError:
-        return None
 
 @app.route("/upload_shared_image", methods=["POST"])
 def upload_shared_image():
@@ -376,6 +348,16 @@ def download_shape_art():
         return send_file(path, as_attachment=True)
     return redirect(url_for("image_generator_page"))
 
+# ────────────────────────────────────────────────────────────────────
+#  /shape_detector  – shared-image + instant-preview backend
+# --------------------------------------------------------------------
+#  • If the user uploads a new file → save it and remember its path
+#    in session["shared_img_path"]  so every page can reuse it.
+#  • If no file is chosen but we already have session["shared_img_path"]
+#    → reopen that cached file and run the decode.
+#  • If neither is available → show an error asking for an upload.
+#  • Keeps your recipe-generation branch exactly as before.
+# ────────────────────────────────────────────────────────────────────
 @app.route("/shape_detector", methods=["GET", "POST"])
 def shape_detector_page():
     error                = None
@@ -384,11 +366,13 @@ def shape_detector_page():
     selected_recipe_color= None
     recipe_results       = None
 
+    # ─────────────────────────── PART A: Decode ───────────────────────────
     if request.method == "POST" and request.form.get("action") != "generate_recipe":
-        file = request.files.get("encoded_image")
+        file = request.files.get("encoded_image")            # may be empty
         img_bgr = None
         path    = None
 
+        # --- A1. NEW upload ------------------------------------------------
         if file and file.filename:
             if not allowed_file(file.filename):
                 error = "Unsupported file type."
@@ -396,11 +380,13 @@ def shape_detector_page():
                 filename = secure_filename(file.filename)
                 path     = os.path.join(app.config["UPLOAD_FOLDER"], filename)
                 file.save(path)
-                session["shared_img_path"] = path
+                session["shared_img_path"] = path            # ❶ remember
                 file_bytes = np.fromfile(path, dtype=np.uint8)
                 img_bgr    = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                 if img_bgr is None:
                     error = "Failed to read uploaded image."
+
+        # --- A2. REUSE cached upload --------------------------------------
         else:
             path = session.get("shared_img_path")
             if path and os.path.exists(path):
@@ -408,6 +394,7 @@ def shape_detector_page():
             else:
                 error = "Please upload an encoded PNG/JPG first."
 
+        # --- A3. Run decode if we have an image ---------------------------
         if img_bgr is not None and error is None:
             shape_opt = request.form.get("shape_detect", "Triangle")
             min_size  = int(request.form.get("min_size", 3))
@@ -418,23 +405,27 @@ def shape_detector_page():
                 boundaries=[], min_size=min_size, max_size=max_size
             )
 
+            # ▶ encode annotated preview
             ann_rgb = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
             buf     = BytesIO()
             Image.fromarray(ann_rgb).save(buf, format="PNG")
             decoded_image_data = base64.b64encode(buf.getvalue()).decode()
 
+            # ▶ group colours & stash in session so recipe-side can reuse
             rgb_py   = [list(map(int, col)) for col in rgb_vals]
             grouped  = sorted(group_similar_colors(rgb_py, threshold=10),
                               key=lambda x: x[1], reverse=True)
             grouped_colors              = grouped
             session["grouped_colors"]   = grouped
 
+            # ▶ keep annotated PNG for “Download”
             tmp_name = f"shape_analysis_{os.getpid()}.png"
             tmp_path = os.path.join(app.config["UPLOAD_FOLDER"], tmp_name)
             with open(tmp_path, "wb") as f_out:
                 f_out.write(buf.getvalue())
             session["analysis_path"] = tmp_path
 
+    # ──────────────────────── PART B: Generate recipe ──────────────────────
     if request.form.get("action") == "generate_recipe":
         sel = request.form.get("selected_color")
         if sel:
@@ -449,6 +440,7 @@ def shape_detector_page():
 
             recipe_results = generate_recipes(selected_recipe_color, base_dict, step=step)
 
+    # ───────────────────────────── render ─────────────────────────────
     return render_template(
         "shape_detector.html",
         error                 = error,
@@ -458,7 +450,7 @@ def shape_detector_page():
         recipe_results        = recipe_results,
         db_list               = list(parse_color_db(read_color_file("color.txt")).keys()),
         active_page           = "shape_detector",
-        shared_img_exists     = bool(session.get("shared_img_path")),
+        shared_img_exists     = bool(session.get("shared_img_path")),   # ❷ flag for template
     )
 
 
@@ -470,22 +462,37 @@ def download_analysis():
     return redirect(url_for("shape_detector_page"))
 @app.route("/download_oil")
 def download_oil():
+    """
+    Send the last oil-painting PNG that was stored in session['oil_path'].
+    Falls back to the Oil-Painting page if the file is missing.
+    """
     path = session.get("oil_path")
     if path and os.path.exists(path):
         return send_file(path, as_attachment=True)
+    # nothing to download → bounce back to the page
     return redirect(url_for("oil_painting_page"))
 @app.route("/oil_painting", methods=["GET", "POST"])
 def oil_painting_page():
+    """
+    GET  → show the form (and maybe the last result preview)
+    POST → either run oil-paint or generate paint recipes, depending on `action`
+    """
     error                 = None
     original_image_data   = None
     result_image_data     = None
     intensity             = int(request.form.get("intensity", 10))
+
+    # For the recipe generator
     selected_recipe_color = None
     recipe_results        = None
+    # Load available colour DB names once
     db_list               = list(parse_color_db(read_color_file("color.txt")).keys())
 
+    # ─── PART A: Oil‐paint generation ──────────────────────────────────
+    # Triggered when action!="generate_recipe"
     if request.method == "POST" and request.form.get("action") != "generate_recipe":
         img_bgr = None
+        # 1. New upload?
         file = request.files.get("oil_image")
         if file and file.filename:
             img_bgr, path, err = save_and_decode(file, subdir="oil_painting")
@@ -493,6 +500,7 @@ def oil_painting_page():
                 error = err
             else:
                 session["shared_img_path"] = path
+        # 2. Reuse shared image
         if img_bgr is None and error is None:
             shared_path = session.get("shared_img_path")
             if shared_path and os.path.exists(shared_path):
@@ -500,12 +508,15 @@ def oil_painting_page():
             else:
                 error = "ERROR"
 
+        # 3. Encode previews & run filter
         if img_bgr is not None and error is None:
+            # stash original preview
             buf = BytesIO()
             orig_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             Image.fromarray(orig_rgb).save(buf, format="PNG")
             original_image_data = base64.b64encode(buf.getvalue()).decode()
 
+            # run the oil filter
             try:
                 painted = oil_main(img_bgr, intensity)
                 painted = (painted * 255).astype(np.uint8)
@@ -515,6 +526,7 @@ def oil_painting_page():
                 Image.fromarray(rgb_img).save(buf, format="PNG")
                 result_image_data = base64.b64encode(buf.getvalue()).decode()
 
+                # store for download
                 tmp_name = f"oil_painting_{os.getpid()}.png"
                 tmp_path = os.path.join(app.config["UPLOAD_FOLDER"], tmp_name)
                 with open(tmp_path, "wb") as f:
@@ -524,6 +536,8 @@ def oil_painting_page():
             except Exception as e:
                 error = f"Error generating oil painting: {e}"
 
+    # ─── PART B: Paint‐recipe generation ───────────────────────────────
+    # Triggered when action=="generate_recipe"
     if request.method == "POST" and request.form.get("action") == "generate_recipe":
         sel = request.form.get("selected_color", "")
         try:
@@ -549,6 +563,7 @@ def oil_painting_page():
                     step=step
                 )
 
+    # ─── Render everything to the template ─────────────────────────────
     return render_template(
         "oil_painting.html",
         error                 = error,
@@ -592,6 +607,7 @@ def colour_merger_page():
     colors = session["colors"]
 
     def get_mixed_rgb(colors_list):
+        # build a zeroed latent of the correct size
         z_mix = [0] * mixbox.LATENT_SIZE
         total = sum(c["weight"] for c in colors_list)
         for i in range(len(z_mix)):
@@ -611,6 +627,9 @@ def colour_merger_page():
     )
 @app.route("/recipe_generator", methods=["GET", "POST"])
 def recipe_generator_page():
+    """
+    Standalone paint-recipe generator.
+    """
     error = None
     recipes = None
     selected_color = (255, 0, 0)
@@ -620,8 +639,10 @@ def recipe_generator_page():
     db_keys = list(databases.keys())
 
     if request.method == "POST":
+        # grab the posted hex (instead of non‐existent 'target_hex')
         hex_color = request.form.get("hex_color")
         if hex_color:
+            # strip leading ‘#’ then parse RRGGBB
             hv = hex_color.lstrip('#')
             selected_color = (
                 int(hv[0:2], 16),
@@ -652,105 +673,42 @@ def recipe_generator_page():
         recipes=recipes,
         active_page="recipe_generator"
     )
-
 @app.route("/colors_db", methods=["GET", "POST"])
 def colors_db_page():
     """
     Browse/Add/Remove colors from color.txt.
     """
+    # 1) Read & parse the file
     full_txt = read_color_file("color.txt")
-    databases = parse_color_db(full_txt)
+    databases = parse_color_db(full_txt)  # returns { db_name: [(color_name, (r,g,b)), …], … }
 
-    subpage = "databases"
+    # 2) Decide which sub‐section to show
+    action = request.form.get("action", "browse")
+    if action == "browse":
+        subpage = "databases"
+    elif action == "add":
+        subpage = "add"
+    elif action == "remove_colors":
+        subpage = "remove_colors"
+    elif action == "create_db":
+        subpage = "custom"
+    elif action == "remove_db":
+        subpage = "remove_database"
+    else:
+        subpage = "databases"
+
+    # (optional) you can pass a message tuple (type, text) if you need feedback
     message = None
-    selected_db_name = None
-
-    if request.method == "POST":
-        action = request.form.get("action")
-
-        # Determine the subpage to show based on the action from the top buttons or forms
-        if action == "browse": subpage = "databases"
-        elif action == "add": subpage = "add"
-        elif action == "remove_colors": subpage = "remove_colors"
-        elif action == "create_db": subpage = "custom"
-        elif action == "remove_db": subpage = "remove_database"
-
-        # --- Handle DB Creation ---
-        if action == "create_db" and "new_db_name" in request.form:
-            new_db_name = request.form.get("new_db_name", "").strip()
-            if not new_db_name:
-                message = ("error", "Database name cannot be empty.")
-            elif new_db_name in databases:
-                message = ("error", f"Database '{new_db_name}' already exists.")
-            else:
-                databases[new_db_name] = []
-                write_color_db(databases)
-                message = ("success", f"Database '{new_db_name}' created successfully.")
-                subpage = "databases"
-
-        # --- Handle Adding a Color ---
-        elif action == "add" and "color_name" in request.form:
-            db_name = request.form.get("db_name")
-            color_name = request.form.get("color_name", "").strip()
-            hex_value = request.form.get("hex_value", "").strip()
-            rgb = hex_to_rgb(hex_value)
-
-            if not db_name or db_name not in databases:
-                message = ("error", "Please select a valid database.")
-            elif not color_name:
-                message = ("error", "Color name cannot be empty.")
-            elif not rgb:
-                message = ("error", "Invalid hex value. Please use #RRGGBB format.")
-            elif any(c[0].lower() == color_name.lower() for c in databases.get(db_name, [])):
-                message = ("error", f"Color '{color_name}' already exists in '{db_name}'.")
-            else:
-                databases[db_name].append((color_name, rgb))
-                write_color_db(databases)
-                message = ("success", f"Color '{color_name}' added to '{db_name}'.")
-
-        # --- Handle Removing Colors ---
-        elif action == "remove_colors":
-            db_name = request.form.get("db_name")
-            colors_to_remove = request.form.getlist("colors")
-            
-            selected_db_name = db_name if db_name else (list(databases.keys())[0] if databases else None)
-
-            # This block only runs if the "Remove Selected" button was clicked (not just a dropdown change)
-            if colors_to_remove and db_name in databases:
-                initial_count = len(databases[db_name])
-                databases[db_name] = [c for c in databases[db_name] if c[0] not in colors_to_remove]
-                write_color_db(databases)
-                removed_count = initial_count - len(databases[db_name])
-                if removed_count > 0:
-                    message = ("success", f"Removed {removed_count} color(s) from '{db_name}'.")
-
-        # --- Handle DB Deletion ---
-        elif action == "remove_db" and "db_name" in request.form:
-            db_to_remove = request.form.get("db_name")
-            if db_to_remove in databases:
-                del databases[db_to_remove]
-                write_color_db(databases)
-                message = ("success", f"Database '{db_to_remove}' has been deleted.")
-                subpage = "databases"
-            else:
-                message = ("error", "Database not found.")
-                subpage = "remove_database"
-
-    # This ensures the 'remove_colors' page shows the first DB by default on GET request
-    if subpage == "remove_colors" and not selected_db_name:
-        if databases:
-            selected_db_name = list(databases.keys())[0]
 
     return render_template(
         "colors_db.html",
-        databases=databases,
-        subpage=subpage,
+        databases=databases,    # a dict for your template to iterate over
+        subpage=subpage,        # controls which form/block shows
         message=message,
-        active_page="colors_db",
-        selected_db_name=selected_db_name
+        active_page="colors_db"
     )
 
-# +++ END OF ADDED/MODIFIED CODE +++
+
 
 def resize_for_processing(image, max_dim=800):
     """Resize image for speed, return (resized, scale)."""
@@ -818,24 +776,36 @@ def draw_random_triangles(image, min_size, max_size, num_triangles):
         cv2.fillPoly(out, [pts], color)
     return out
 
+def allowed_file(filename):
+    ext = filename.rsplit(".", 1)[-1].lower()
+    return ext in {"png", "jpg", "jpeg", "webp"}
+
+# ─────────── Route ────────────────────────────────────────────────────
+
+
 def get_db_list():
+    # return just the list of DB names
     full_txt = read_color_file("color.txt")
-    all_dbs  = parse_color_db(full_txt)
+    all_dbs  = parse_color_db(full_txt)    # returns { name: [...], … }
     return list(all_dbs.keys())
 
 
 @app.route("/foogle_man_repo", methods=["GET", "POST"])
 def foogle_man_repo_page():
+    # ✧ 1. Art‐generation tab
     original_b64   = None
     generated_b64  = None
     download_url   = None
     num_shapes     = 0
+
+    # ✧ 2. Paint‐recipe tab
     error                  = None
-    recipe_results         = None
-    selected_recipe_color  = None
+    recipe_results         = None     # list of (recipe, mixedRGB, err)
+    selected_recipe_color  = None     # rename here
     db_list                = get_db_list()
 
     if request.method == "POST":
+        # ── A) Paint‐recipe branch ───────────────────────────
         if request.form.get("action") == "generate_recipe":
             sel = request.form.get("selected_color", "").strip()
             try:
@@ -862,10 +832,13 @@ def foogle_man_repo_page():
                         base_dict,
                         step=step
                     )
+
+        # ── B) Image‐to‐art branch ────────────────────────────
         else:
             img_bgr = None
             file    = request.files.get("image")
 
+            # B1: New upload?
             if file and file.filename:
                 img_bgr, path, err = save_and_decode(file, subdir="foogle_man")
                 if err:
@@ -873,6 +846,7 @@ def foogle_man_repo_page():
                 else:
                     session["shared_img_path"] = path
 
+            # B2: Reuse shared
             if img_bgr is None and not error:
                 path = session.get("shared_img_path")
                 if path and os.path.exists(path):
@@ -880,6 +854,7 @@ def foogle_man_repo_page():
                 else:
                     error = "Please upload an image first (on any page)."
 
+            # B3: Generate art
             if img_bgr is not None and not error:
                 shape_type = request.form.get("shape_type", "Circles")
                 min_size   = int(request.form.get("min_size", 5))
@@ -904,11 +879,13 @@ def foogle_man_repo_page():
                         interpolation=cv2.INTER_LINEAR
                     )
 
+                # original preview
                 buf = BytesIO()
                 Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))\
                      .save(buf, format="PNG")
                 original_b64 = base64.b64encode(buf.getvalue()).decode()
 
+                # generated preview
                 buf = BytesIO()
                 Image.fromarray(cv2.cvtColor(art, cv2.COLOR_BGR2RGB))\
                      .save(buf, format="PNG")
@@ -916,25 +893,38 @@ def foogle_man_repo_page():
 
                 download_url = f"data:image/png;base64,{generated_b64}"
 
+    # ─── Render ───────────────────────────────────────────────
     return render_template(
         "foogle_man_repo.html",
+
+        # art tab
         original_image    = original_b64,
         generated_image   = generated_b64,
         num_shapes        = num_shapes,
         download_url      = download_url,
+
+        # recipe tab
         error                   = error,
         db_list                 = db_list,
-        selected_recipe_color   = selected_recipe_color,
+        selected_recipe_color   = selected_recipe_color,  # pass to HTML
         recipe_results          = recipe_results,
+
+        # shared‐image flag
         shared_img_exists = bool(session.get("shared_img_path")),
     )
 
 
 @app.route("/paint_geometrize")
 def paint_geometrize_page():
+    """
+    1. GET:  render empty form
+    2. POST: parse selected_color, db_choice, step → generate_recipes → re-render with results
+    """
     error               = None
     recipe_results      = None
     selected_recipe_rgb = None
+
+    # load DB choices for dropdown on every render
     db_list = get_db_list()
 
     if request.method == "POST" and request.form.get("action") == "generate_recipe":
@@ -945,6 +935,7 @@ def paint_geometrize_page():
         except ValueError:
             error = "Invalid RGB—please click on the image to pick a colour."
         else:
+            # parse step & db_choice
             try:
                 step = float(request.form.get("step", 10.0))
             except ValueError:
@@ -953,12 +944,15 @@ def paint_geometrize_page():
             if db_choice not in db_list:
                 error = f"Unknown colour DB '{db_choice}'."
             else:
+                # load that database
                 full_txt = read_color_file("color.txt")
                 all_dbs   = parse_color_db(full_txt)
                 base_dict = {name: tuple(rgb) for name, rgb in all_dbs[db_choice]}
 
+                # compute recipes
                 recipe_results = generate_recipes(selected_recipe_rgb, base_dict, step=step)
 
+                # stringify any tuple mixes for JSON/template safety
                 for rec in recipe_results:
                     if isinstance(rec.get("mix"), (tuple, list)):
                         rec["mix"] = ", ".join(str(c) for c in rec["mix"])
@@ -972,6 +966,95 @@ def paint_geometrize_page():
         active_page="paint_geometrize"
     )
 
+# ═══════════ NEW Geometrize API Endpoint ═══════════
+@app.route("/api/geometrize", methods=["POST"])
+def api_geometrize():
+    """
+    Accepts a multipart/form-data request with:
+    - image: The image file to process.
+    - num_shapes: (optional) The number of shapes to generate. Default 50.
+    - shape_types: (optional) Comma-separated list of shape types.
+                   e.g., "RECTANGLE,TRIANGLE,ELLIPSE"
+                   Defaults to all available shapes.
+    Returns a JSON object containing the geometrizing result.
+    """
+    # 1. Validate file upload
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+    file = request.files['image']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"error": "File type not allowed"}), 400
+
+    # 2. Get parameters
+    try:
+        num_shapes = int(request.form.get('num_shapes', 50))
+    except ValueError:
+        return jsonify({"error": "num_shapes must be an integer"}), 400
+
+    shape_types_str = request.form.get('shape_types', 'RECTANGLE,ROTATED_RECTANGLE,TRIANGLE,ELLIPSE,ROTATED_ELLIPSE,CIRCLE,LINE,QUADRATIC_BEZIER')
+    shape_types = [s.strip() for s in shape_types_str.split(',')]
+
+
+    # 3. Setup Selenium Headless Browser
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    driver = webdriver.Chrome(options=chrome_options)
+
+    try:
+        # 4. Load the runner HTML page
+        # We use request.url_root to build an absolute URL to our runner page.
+        runner_url = url_for('geometrize_runner_page', _external=True)
+        driver.get(runner_url)
+
+        # 5. Prepare and inject the image
+        image_bytes = file.read()
+        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+        data_url = f"data:image/png;base64,{image_b64}"
+
+        # Use JavaScript to set the src of the image element
+        driver.execute_script(f"document.getElementById('inputImage').src = '{data_url}';")
+
+        # Wait for the image to load
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return document.getElementById('inputImage').complete;")
+        )
+
+        # 6. Execute the geometrizing script
+        options = {
+            "num_shapes": num_shapes,
+            "shape_types": shape_types
+        }
+        driver.execute_script(f"startGeometrizing({json.dumps(options)});")
+
+        # 7. Wait for the result
+        # The JS will set window.geometrizeResult when it's done.
+        WebDriverWait(driver, timeout=300).until(
+            lambda d: d.execute_script("return window.geometrizeResult;")
+        )
+
+        # 8. Retrieve and return the result
+        result_json_str = driver.execute_script("return window.geometrizeResult;")
+        result_data = json.loads(result_json_str)
+
+        return jsonify(result_data)
+
+    except Exception as e:
+        import traceback
+        return jsonify({"error": "An error occurred during geometrizing.", "details": str(e), "trace": traceback.format_exc()}), 500
+    finally:
+        driver.quit()
+
+@app.route("/geometrize_runner")
+def geometrize_runner_page():
+    """Serves the HTML page that runs the geometrizing script."""
+    return render_template("geometrize_runner.html")
+
+
+# ═══════════ NEW AJAX ENDPOINT ═══════════
 @app.route("/generate_recipe", methods=["POST"])
 def ajax_generate_recipe():
     sel = request.form.get("selected_color", "")
@@ -1000,30 +1083,7 @@ def ajax_generate_recipe():
             "error": err
         })
     return jsonify(ok=True, recipes=payload)
-
-@app.route("/api/sum", methods=["GET"])
-def api_sum_get():
-    a = request.args.get("a", type=float)
-    b = request.args.get("b", type=float)
-    if a is None or b is None:
-        return jsonify(error="Please provide numeric 'a' and 'b' query parameters"), 400
-    return jsonify(sum=a + b)
-
-
-@app.route("/api/sum", methods=["POST"])
-def api_sum_post():
-    data = request.get_json(silent=True)
-    if not data or "a" not in data or "b" not in data:
-        return jsonify(error="Please send JSON with 'a' and 'b' fields"), 400
-    try:
-        a = float(data["a"])
-        b = float(data["b"])
-    except (TypeError, ValueError):
-        return jsonify(error="'a' and 'b' must be numbers"), 400
-    return jsonify(sum=a + b)
-
-
-
+# ══════════════════════════════════════════
 import traceback
 @app.errorhandler(Exception)
 def handle_all_exceptions(e):
@@ -1035,7 +1095,7 @@ def handle_all_exceptions(e):
     return jsonify(
         error=str(e),
         traceback=tb
-    ), 50
+    ), 500
 @app.route("/api/recipes", methods=["POST"])
 def api_generate_recipes():
     data = request.get_json(silent=True)
@@ -1429,280 +1489,7 @@ def api_shape_detect():
             error=str(e),
             traceback=traceback.format_exc()
         ), 500
-
-# ─────────────────────── helpers reused from FastAPI version ───────────────
-def _prepare_primitive_binary() -> str:
-    """Return path to the `primitive` CLI, downloading the Windows build
-    on-demand if we are on a Win32 host; otherwise assume it is in $PATH."""
-    if platform.system().lower().startswith("win"):
-        bin_path = os.path.join(os.path.dirname(__file__), "primitive.exe")
-        if not os.path.exists(bin_path):
-            print("Downloading primitive binary for Windows …")
-            url = ("https://github.com/fogleman/primitive/releases/download/"
-                   "v0.1.1/primitive_windows_amd64.exe")
-            resp = requests.get(url, timeout=30)
-            resp.raise_for_status()
-            with open(bin_path, "wb") as f:
-                f.write(resp.content)
-            # mark executable
-            os.chmod(bin_path, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
-        return bin_path
-    return "primitive"                       # assume *nix package / PATH
-
-PRIMITIVE_CMD = _prepare_primitive_binary()
-HEX_RE = re.compile(r"^[0-9a-fA-F]{6}$")
-
-def hex_from_color(color: str) -> str:
-    """Accept '#rrggbb', 'rrggbb', 'rgb(r,g,b)', or 'r,g,b'. Return lowercase 6-hex."""
-    if not color:
-        return "ffffff"
-    if color.startswith("#"):
-        color = color[1:]
-    if HEX_RE.fullmatch(color):
-        return color.lower()
-    if color.lower().startswith("rgb"):
-        nums = re.findall(r"\d+", color)
-        if len(nums) >= 3:
-            r, g, b = map(int, nums[:3])
-            return f"{r:02x}{g:02x}{b:02x}"
-    if "," in color:
-        try:
-            r, g, b, *_ = map(int, color.split(","))
-            return f"{r:02x}{g:02x}{b:02x}"
-        except ValueError:
-            pass
-    raise ValueError("Invalid background_color format")
-import xml.etree.ElementTree as ET
-import re
-
-# ─── Internal helpers ────────────────────────────────────────────
-_HEX_RE = re.compile(r'^#?[0-9a-fA-F]{6}$')
-
-def _norm_hex(col: str) -> str:
-    """
-    Normalise colour strings to '#rrggbb' (lower-case, leading #).
-    Accepts '#rrggbb', 'rrggbb', 'rgb(r,g,b)', or 'r,g,b'.
-    """
-    if not col:
-        return "#000000"
-
-    if _HEX_RE.fullmatch(col):
-        return f"#{col.lstrip('#').lower()}"
-
-    if col.lower().startswith("rgb"):
-        nums = list(map(int, re.findall(r'\d+', col)))
-        if len(nums) >= 3:
-            r, g, b = nums[:3]
-            return f"#{r:02x}{g:02x}{b:02x}"
-
-    if "," in col:
-        try:
-            r, g, b, *_ = map(int, col.split(","))
-            return f"#{r:02x}{g:02x}{b:02x}"
-        except ValueError:
-            pass
-
-    return "#000000"
-
-# ─── Main converter ──────────────────────────────────────────────
-def _svg_to_json(svg_txt: str) -> dict:
-    """
-    Convert Primitive-style SVG text into the geometrizer JSON schema.
-
-    Returns a dict with keys:
-        • shapes            – list[…]
-        • background_color  – '#rrggbb'
-        • canvas_size       – [width, height]
-    """
-    if not svg_txt.strip().startswith("<svg"):
-        raise ValueError("Input does not appear to be valid SVG")
-
-    root = ET.fromstring(svg_txt)
-    width  = int(float(root.attrib.get("width", 0)))
-    height = int(float(root.attrib.get("height", 0)))
-
-    # Background colour: first <rect> that spans the canvas
-    bg_hex = "#ffffff"
-    for el in root:
-        if el.tag.lower().endswith("rect"):
-            bg_hex = _norm_hex(el.attrib.get("fill", "#ffffff"))
-            break
-
-    shapes = []
-    for el in root.iter():
-        tag = el.tag.lower().split('}')[-1]      # strip any SVG namespace
-        if tag in {"svg", "rect"}:
-            continue                             # skip root & background
-
-        fill     = _norm_hex(el.attrib.get("fill", "#000000"))
-        opacity  = int(float(el.attrib.get("fill-opacity", "1")) * 255)
-
-        if tag == "polygon":
-            pts = [[*map(float, p.split(','))]
-                   for p in el.attrib["points"].split()]
-            shape_type = "triangle" if len(pts) == 3 else "rectangle"
-            shapes.append({
-                "type":     shape_type,
-                "color":    fill,
-                "opacity":  opacity,
-                "points":   pts,
-            })
-
-        elif tag == "ellipse":
-            cx = float(el.attrib.get("cx", 0))
-            cy = float(el.attrib.get("cy", 0))
-            rx = float(el.attrib.get("rx", 0))
-            ry = float(el.attrib.get("ry", 0))
-            shape_type = "circle" if abs(rx - ry) < 1e-6 else "ellipse"
-            shapes.append({
-                "type":     shape_type,
-                "color":    fill,
-                "opacity":  opacity,
-                "center":   [cx, cy],
-                "radius":   rx if shape_type == "circle" else [rx, ry],
-            })
-
-        elif tag == "path":
-            shapes.append({
-                "type":     "quadratic_bezier",
-                "color":    fill,
-                "opacity":  opacity,
-                "path":     el.attrib.get("d", ""),
-            })
-
-    return {
-        "shapes":            shapes,
-        "background_color":  bg_hex,
-        "canvas_size":       [width, height],
-    }
-
-# ────────────────────────────── /api/generate ──────────────────────────────
-@app.route("/api/generate", methods=["POST"])
-def generate():
-    """
-    Parameters (multipart-form or application/x-www-form-urlencoded):
-
-        image=<file>             – optional; mutually exclusive with image_base64
-        image_base64=<string>    – optional; base-64-encoded PNG/JPEG/GIF
-        output_format=png|svg|json   [required]
-        shape_types=triangle|rectangle|ellipse|circle|rotated_rectangle|rotated_ellipse (repeatable)
-        opacity=0-255                  (default 128)
-        shape_count=int>0              (default 200)
-        background_color=#rrggbb|rgb(r,g,b)|r,g,b  (default white)
-        resize_width=int, resize_height=int (optional)
-    """
-    # ---------------- read request body ----------------
-    img_file = request.files.get("image")
-    img_b64  = request.form.get("image_base64")
-    if img_file:
-        contents = img_file.read()
-        orig_ext = os.path.splitext(img_file.filename)[1] or ".png"
-    elif img_b64:
-        try:
-            if img_b64.startswith("data:image"):
-                img_b64 = img_b64.split(",", 1)[1]
-            contents = base64.b64decode(img_b64)
-        except Exception as exc:
-            return jsonify(detail=f"Invalid base64 image: {exc}"), 400
-        orig_ext = ".png"
-    else:
-        return jsonify(detail="Image file or base64 string is required."), 400
-
-    output_format = (request.form.get("output_format") or "").lower()
-    if output_format not in {"png", "svg", "json"}:
-        return jsonify(detail="output_format must be 'png', 'svg', or 'json'"), 400
-
-    shape_types: List[str] = request.form.getlist("shape_types")
-    opacity       = int(request.form.get("opacity", 128))
-    shape_count   = int(request.form.get("shape_count", 200))
-    background    = request.form.get("background_color")
-    resize_w      = request.form.get("resize_width",  type=int)
-    resize_h      = request.form.get("resize_height", type=int)
-    if not (0 <= opacity <= 255):
-        return jsonify(detail="opacity must be 0-255"), 400
-    if shape_count <= 0:
-        return jsonify(detail="shape_count must be positive"), 400
-
-    # ---------------- temp dir & optional resize ----------------
-    tmp = tempfile.mkdtemp()
-    try:
-        inp_path = os.path.join(tmp, f"input{orig_ext}")
-        with open(inp_path, "wb") as f:
-            f.write(contents)
-
-        if resize_w or resize_h:
-            with Image.open(inp_path) as im:
-                im = im.resize((resize_w or im.width, resize_h or im.height))
-                im.save(inp_path)
-
-        # ---------------- build primitive CLI args ----------------
-        mapping = {
-            "triangle": 1, "rectangle": 2, "ellipse": 3, "circle": 4,
-            "rotated_rectangle": 5, "rotated_ellipse": 7
-        }
-        mode = 0
-        if shape_types:
-            try:
-                modes = [mapping[st.lower()] for st in shape_types]
-            except KeyError as bad:
-                return jsonify(detail=f"Unsupported shape type: {bad}"), 400
-            mode = modes[0] if len(modes) == 1 else 0
-
-        bg_hex = hex_from_color(background) if background else "ffffff"
-        out_path = os.path.join(tmp, "output." + ("png" if output_format == "png" else "svg"))
-
-        cmd = [
-            PRIMITIVE_CMD, "-i", inp_path, "-o", out_path,
-            "-n", str(shape_count), "-m", str(mode), "-a", str(opacity), "-bg", bg_hex
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print("primitive stderr:", result.stderr)
-            return jsonify(detail=f"Primitive failed: {result.stderr}"), 500
-
-        # ---------------- format-specific response ----------------
-        if output_format == "png":
-            return Response(open(out_path, "rb").read(), mimetype="image/png")
-
-        if output_format == "svg":
-            return Response(open(out_path, "r", encoding="utf-8").read(),
-                            mimetype="image/svg+xml")
-        if output_format == "json":
-            svg_txt = open(out_path, "r", encoding="utf-8").read()
-            return jsonify(_svg_to_json(svg_txt))
-        # JSON: parse basic shapes from SVG
-        import xml.etree.ElementTree as ET
-        svg_data = open(out_path, "r", encoding="utf-8").read()
-        root = ET.fromstring(svg_data)
-        shapes = []
-        for el in root:
-            tag   = el.tag.lower().split("}", 1)[-1]  # strip xmlns
-            fill  = el.attrib.get("fill", "#000000")
-            alpha = float(el.attrib.get("fill-opacity", "1"))
-            op    = int(alpha * 255)
-            if tag == "polygon":
-                pts = [[*map(float, p.split(","))] for p in el.attrib.get("points", "").split()]
-                t   = "triangle" if len(pts) == 3 else "rectangle"
-                shapes.append({"type": t, "color": fill, "opacity": op, "points": pts})
-            elif tag == "ellipse":
-                cx, cy = float(el.attrib["cx"]), float(el.attrib["cy"])
-                rx, ry = float(el.attrib["rx"]), float(el.attrib["ry"])
-                t   = "circle" if abs(rx - ry) < 1e-6 else "ellipse"
-                shapes.append({"type": t, "color": fill, "opacity": op,
-                               "center": [cx, cy], "radius": rx if t == "circle" else [rx, ry]})
-            elif tag == "path":
-                shapes.append({"type": "quadratic_bezier", "color": fill,
-                               "opacity": op, "path": el.attrib.get("d", "")})
-
-        with Image.open(inp_path) as im:
-            canvas = [im.width, im.height]
-
-        return jsonify(shapes=shapes, background_color=f"#{bg_hex}", canvas_size=canvas)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 # ─────────── MAIN ─────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 5000))  # Get port from environment (Render sets this)
     app.run(host="0.0.0.0", port=port, debug=True)

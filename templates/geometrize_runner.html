@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Geometrize Runner</title>
+    <style>
+        /* Hide elements as this page is for background processing */
+        body {
+            visibility: hidden;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- This image tag will be populated with the uploaded image data -->
+    <img id="inputImage" />
+
+    <!-- The geometrizing script, loaded from the correct path -->
+    <script src="{{ url_for('static', filename='js/geometrize.js') }}"></script>
+
+    <script>
+        // This function will be called by Selenium to start the process
+        async function startGeometrizing(options) {
+            // Default options
+            const numShapes = options.num_shapes || 50;
+            const shapeTypeMap = {
+                RECTANGLE: 0,
+                ROTATED_RECTANGLE: 1,
+                TRIANGLE: 2,
+                ELLIPSE: 3,
+                ROTATED_ELLIPSE: 4,
+                CIRCLE: 5,
+                LINE: 6,
+                QUADRATIC_BEZIER: 7
+            };
+            const shapeTypes = options.shape_types.map(st => shapeTypeMap[st]).filter(st => st !== undefined);
+
+            const imageElement = document.getElementById('inputImage');
+
+            // Helper function to convert an image element to a canvas
+            function imageToCanvas(image) {
+                const canvas = document.createElement("canvas");
+                canvas.width = image.width;
+                canvas.height = image.height;
+                const context = canvas.getContext("2d");
+                context.drawImage(image, 0, 0);
+                return canvas;
+            }
+            
+            // NEW HELPER FUNCTION: Re-implements the logic to get the average image color
+            function getAverageColor(canvas) {
+                const context = canvas.getContext('2d');
+                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imageData.data;
+                let r = 0, g = 0, b = 0;
+
+                for (let i = 0; i < data.length; i += 4) {
+                    r += data[i];
+                    g += data[i + 1];
+                    b += data[i + 2];
+                }
+
+                const pixelCount = data.length / 4;
+                r = Math.floor(r / pixelCount);
+                g = Math.floor(g / pixelCount);
+                b = Math.floor(b / pixelCount);
+                
+                // The script expects a 32-bit integer color format (RGBA)
+                return (r << 24) | (g << 16) | (b << 8) | 255;
+            }
+
+
+            // Helper function to convert a canvas to a geometrize.bitmap.Bitmap object
+            function canvasToBitmap(canvas) {
+                const context = canvas.getContext("2d");
+                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                return geometrize.bitmap.Bitmap.createFromByteArray(canvas.width, canvas.height, imageData.data);
+            }
+
+            try {
+                const imageCanvas = imageToCanvas(imageElement);
+                const targetBitmap = canvasToBitmap(imageCanvas);
+
+                // FIX: Use our new helper function to get the background color
+                const backgroundColor = getAverageColor(imageCanvas);
+
+                // Initialize the image runner
+                const runner = new geometrize.runner.ImageRunner(targetBitmap, backgroundColor);
+                const results = [];
+
+                // Step through and generate shapes
+                for (let i = 0; i < numShapes; i++) {
+                    const stepResult = runner.step({
+                        shapeTypes: shapeTypes,
+                        alpha: 128,
+                        candidateShapesPerStep: 50,
+                        shapeMutationsPerStep: 100
+                    });
+
+                    if (stepResult && stepResult.length > 0) {
+                        const shapeData = stepResult[0];
+                        const jsonStr = geometrize.exporter.ShapeJsonExporter.exportShape(shapeData);
+                        // The exporter returns a string, so we parse it to store as an object
+                        results.push(JSON.parse(jsonStr));
+                    }
+                }
+                
+                // Store the final result in a global window variable for Selenium to pick up
+                window.geometrizeResult = JSON.stringify({ shapes: results });
+
+            } catch (e) {
+                // If an error occurs, store it for debugging
+                window.geometrizeResult = JSON.stringify({ error: e.toString(), stack: e.stack });
+            }
+        }
+    </script>
+
+</body>
+</html>
