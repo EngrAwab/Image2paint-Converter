@@ -1024,7 +1024,411 @@ def api_sum_post():
 
 
 
+import traceback
+@app.errorhandler(Exception)
+def handle_all_exceptions(e):
+    """
+    Catch any uncaught exception and return it (plus a stack trace)
+    as JSON so clients can see exactly what failed.
+    """
+    tb = traceback.format_exc()
+    return jsonify(
+        error=str(e),
+        traceback=tb
+    ), 50
+@app.route("/api/recipes", methods=["POST"])
+def api_generate_recipes():
+    data = request.get_json(silent=True)
+    if not data or "target" not in data or "db_choice" not in data:
+        return jsonify(error="Please send JSON with 'target' and 'db_choice'"), 400
 
+    # 1) Parse inputs
+    try:
+        target = tuple(int(x) for x in data["target"])
+        step   = float(data.get("step", 10.0))
+        dbc    = data["db_choice"]
+    except (TypeError, ValueError):
+        return jsonify(error="Bad 'target' format or 'step' not a number"), 400
+
+    # 2) Load & lookup database
+    full_txt = read_color_file("color.txt")
+    all_dbs  = parse_color_db(full_txt)
+    raw_list = all_dbs.get(dbc)
+    if raw_list is None:
+        return jsonify(error=f"Unknown db_choice '{dbc}'"), 400
+
+    # base_dict maps name → [r,g,b]
+    base_dict = {name: list(rgb) for name, rgb in raw_list}
+
+    # 3) Generate recipes
+    recipes = generate_recipes(target, base_dict, step=step)
+
+    # 4) Build response with rgb for each component
+    payload = []
+    for rec_list, mixed_rgb, err in recipes:
+        components = []
+        for name, perc in rec_list:
+            rgb = base_dict.get(name, [0,0,0])
+            components.append({
+                "name": name,
+                "rgb": rgb,
+                "perc": perc
+            })
+        payload.append({
+            "recipe": components,
+            "mix": mixed_rgb,
+            "error": err
+        })
+
+    return jsonify(recipes=payload), 200
+
+@app.route("/api/merge_colors", methods=["POST"])
+def api_merge_colors():
+    data = request.get_json(silent=True)
+    if not data or "colors" not in data:
+        return jsonify(error="Please send JSON with 'colors' list"), 400
+
+    try:
+        colors = data["colors"]
+        # reuse your colour-merger logic
+        # build latent mix
+        total_w = sum(c["weight"] for c in colors)
+        z_mix = [0] * mixbox.LATENT_SIZE
+        for i in range(len(z_mix)):
+            z_mix[i] = sum(
+                c["weight"] * mixbox.rgb_to_latent(c["rgb"])[i]
+                for c in colors
+            ) / total_w
+        mixed_rgb = mixbox.latent_to_rgb(z_mix)
+    except Exception as e:
+        return jsonify(error=f"Invalid payload: {e}"), 400
+
+    return jsonify(mixed_rgb=list(mixed_rgb)), 200
+@app.route("/api/oil_paint", methods=["POST"])
+def api_oil_paint():
+    try:
+        # 1) Check file
+        file = request.files.get("oil_image")
+        if not file:
+            return jsonify(error="No 'oil_image' file provided"), 400
+
+        # 2) Parse & coerce intensity to int
+        try:
+            intensity = int(float(request.form.get("intensity", 10.0)))
+        except ValueError:
+            return jsonify(error="'intensity' must be a number"), 400
+
+        # 3) Decode upload (validates extension, reads into BGR array)
+        img_bgr, path, err = save_and_decode(file, subdir="oil_painting")
+        if err:
+            return jsonify(error=err), 400
+
+        # 4) Run your oil-paint filter
+        painted = oil_main(img_bgr, intensity)
+        painted = (painted * 255).astype(np.uint8)
+        rgb_img = cv2.cvtColor(painted, cv2.COLOR_BGR2RGB)
+
+        # 5) Encode result as base64‐PNG
+        buf = BytesIO()
+        Image.fromarray(rgb_img).save(buf, format="PNG")
+        result_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        return jsonify(result_image=result_b64), 200
+
+    except Exception as e:
+        # This will be caught by handle_all_exceptions too, but here we add local traceback
+        return jsonify(error=str(e), traceback=traceback.format_exc()), 500
+@app.route("/api/foogle_art", methods=["POST"])
+def api_foogle_art():
+    """
+    Expects multipart/form-data:
+      - image: file
+      - shape_type: "Circles"|"Rectangles"|"Triangles"
+      - min_size, max_size, num_shapes: ints
+    Returns JSON:
+      {
+        "shapes": [
+          {
+            "type": "Circle",
+            "center": [x, y],
+            "radius": r,
+            "color": [R, G, B]
+          },
+          {
+            "type": "Rectangle",
+            "points": [[x1,y1],[x2,y2],[x3,y3],[x4,y4]],
+            "color": [R, G, B]
+          },
+          {
+            "type": "Triangle",
+            "points": [[x1,y1],[x2,y2],[x3,y3]],
+            "color": [R, G, B]
+          },
+          …
+        ]
+      }
+    """
+    try:
+        file = request.files.get("image")
+        if not file:
+            return jsonify(error="No 'image' file provided"), 400
+
+        # decode upload
+        img_bgr, path, err = save_and_decode(file, subdir="foogle_man")
+        if err:
+            return jsonify(error=err), 400
+
+        # parameters
+        shape_type = request.form.get("shape_type", "Circles")
+        try:
+            min_size   = int(request.form.get("min_size", 5))
+            max_size   = int(request.form.get("max_size", 30))
+            num_shapes = int(request.form.get("num_shapes", 100))
+        except ValueError:
+            return jsonify(error="min_size, max_size, num_shapes must be integers"), 400
+
+        # prepare input for drawing
+        proc, scale = resize_for_processing(img_bgr)
+        block_size  = (min_size + max_size) // 5
+        pix         = pixelate_image(proc, block_size)
+
+        # we'll record each shape here
+        shapes = []
+        out = pix.copy()
+
+        import random
+
+        if shape_type == "Circles":
+            for _ in range(num_shapes):
+                r = random.randint(min_size, max_size)
+                x = random.randint(r, out.shape[1] - r)
+                y = random.randint(r, out.shape[0] - r)
+                # BGR→RGB
+                b, g, r_col = out[y, x].tolist()
+                shapes.append({
+                    "type": "Circle",
+                    "center": [x, y],
+                    "radius": r,
+                    "color": [r_col, g, b]
+                })
+                cv2.circle(out, (x, y), r, (b, g, r_col), -1)
+
+        elif shape_type == "Rectangles":
+            for _ in range(num_shapes):
+                rw = random.randint(min_size, max_size)
+                rh = random.randint(min_size, max_size)
+                x  = random.randint(0, out.shape[1] - rw)
+                y  = random.randint(0, out.shape[0] - rh)
+                pts = np.array([[x, y],
+                                [x+rw, y],
+                                [x+rw, y+rh],
+                                [x, y+rh]], dtype=np.int32)
+                b, g, r_col = out[y, x].tolist()
+                shapes.append({
+                    "type": "Rectangle",
+                    "points": pts.tolist(),
+                    "color": [r_col, g, b]
+                })
+                cv2.fillPoly(out, [pts], (b, g, r_col))
+
+        else:  # Triangles
+            for _ in range(num_shapes):
+                side = random.randint(min_size, max_size)
+                tri_h = int(side * math.sqrt(3) / 2)
+                x = random.randint(0, out.shape[1] - side)
+                y = random.randint(tri_h, out.shape[0])
+                tri = np.array([
+                    [x,       y],
+                    [x + side, y],
+                    [x + side//2, y - tri_h]
+                ], dtype=np.int32)
+                # pick color at one vertex
+                b, g, r_col = out[y - tri_h//2, x + side//2].tolist()
+                shapes.append({
+                    "type": "Triangle",
+                    "points": tri.tolist(),
+                    "color": [r_col, g, b]
+                })
+                cv2.fillPoly(out, [tri], (b, g, r_col))
+
+        # scale back if needed
+        if scale < 1.0:
+            out = cv2.resize(
+                out,
+                (img_bgr.shape[1], img_bgr.shape[0]),
+                interpolation=cv2.INTER_LINEAR
+            )
+
+        return jsonify(shapes=shapes), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify(error=str(e), traceback=traceback.format_exc()), 500
+
+
+
+
+
+@app.route("/api/shape_art", methods=["POST"])
+def api_shape_art():
+    """
+    API equivalent of image_generator_page Part A:
+      - Accepts multipart/form-data:
+          • image: file
+          • shape_type: "Triangle"|"Circles"|"Rectangles"
+          • num_shapes: int
+          • min_size: int
+          • max_size: int
+      - Returns JSON { "image": "<Base64-PNG>" }
+      - Side-effect: saves the same PNG to disk & sets session["shape_art_path"]
+                     so your unchanged download_shape_art and shape_detector_page work.
+    """
+    # 1) Validate upload
+    file = request.files.get("image")
+    if not file or file.filename == "":
+        return jsonify(error="No image file provided"), 400
+
+    # 2) Parse parameters
+    shape_type = request.form.get("shape_type", "Triangle")
+    try:
+        num_shapes = int(request.form.get("num_shapes", 100))
+        min_size   = int(request.form.get("min_size", 10))
+        max_size   = int(request.form.get("max_size", 50))
+    except ValueError:
+        return jsonify(error="num_shapes, min_size and max_size must be integers"), 400
+
+    # 3) Decode upload into BGR array
+    img_bgr, _, err = save_and_decode(file, subdir="shape_art")
+    if err:
+        return jsonify(error=err), 400
+
+    # 4) Generate shape art exactly as in image_generator_page
+    try:
+        encoded_img, _ = encode(
+            img_bgr,
+            shape_type,
+            output_path="",
+            num_shapes=num_shapes,
+            min_size=min_size,
+            max_size=max_size,
+        )
+    except Exception as e:
+        return jsonify(error=f"Error generating shape art: {e}"), 500
+
+    # 5) Convert to PNG → Base64
+    rgb_img = cv2.cvtColor(encoded_img, cv2.COLOR_BGR2RGB)
+    buf     = BytesIO()
+    Image.fromarray(rgb_img).save(buf, format="PNG")
+    b64     = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    # 6) Save the same PNG to disk & session["shape_art_path"]
+    tmp_name = f"shape_art_{os.getpid()}.png"
+    tmp_path = os.path.join(app.config["UPLOAD_FOLDER"], tmp_name)
+    with open(tmp_path, "wb") as out:
+        out.write(buf.getvalue())
+    session["shape_art_path"] = tmp_path
+
+    # 7) Return JSON
+    return jsonify(image=b64), 200
+@app.route("/api/shape_detect", methods=["POST"])
+def api_shape_detect():
+    """
+    POST supports two modes:
+    1) multipart/form-data with file field 'encoded_image'
+    2) application/json with keys:
+         - image:      Base64‐PNG string
+         - shape_type: "Triangle"|"Circles"|"Rectangles"
+         - min_size:   int
+         - max_size:   int
+    Returns JSON:
+      {
+        "annotated_image": "<Base64‐PNG>",
+        "grouped_colors": [
+          { "color": [R,G,B], "count": N },
+          …
+        ]
+      }
+    """
+    try:
+        # ── 1) Read parameters ───────────────────────────────
+        # Default values
+        shape_opt = None
+        min_size  = None
+        max_size  = None
+
+        # If JSON body:
+        if request.is_json:
+            data = request.get_json()
+            b64 = data.get("image")
+            shape_opt = data.get("shape_type", "Triangle")
+            try:
+                min_size = int(data.get("min_size", 3))
+                max_size = int(data.get("max_size", 10))
+            except (TypeError, ValueError):
+                return jsonify(error="min_size and max_size must be integers"), 400
+
+            if not b64:
+                return jsonify(error="Missing Base64 'image'"), 400
+
+            # Decode Base64 → bytes → numpy array → BGR
+            img_bytes = base64.b64decode(b64)
+            arr       = np.frombuffer(img_bytes, np.uint8)
+            img_bgr   = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if img_bgr is None:
+                return jsonify(error="Could not decode Base64 image"), 400
+
+        else:
+            # multipart upload
+            file = request.files.get("encoded_image")
+            if not file or file.filename == "":
+                return jsonify(error="No 'encoded_image' file provided"), 400
+            shape_opt = request.form.get("shape_type", "Triangle")
+            try:
+                min_size = int(request.form.get("min_size", 3))
+                max_size = int(request.form.get("max_size", 10))
+            except ValueError:
+                return jsonify(error="min_size and max_size must be integers"), 400
+
+            # Use your helper to read & decode
+            img_bgr, _, err = save_and_decode(file, subdir="shape_detector")
+            if err:
+                return jsonify(error=err), 400
+
+        # ── 2) Run your EnDe.decode ────────────────────────────
+        _, annotated_img, rgb_vals = decode(
+            img_bgr,
+            shape_opt,
+            boundaries=[],
+            min_size=min_size,
+            max_size=max_size
+        )
+
+        # ── 3) Encode annotated preview as Base64‐PNG ───────────
+        ann_rgb = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
+        buf     = BytesIO()
+        Image.fromarray(ann_rgb).save(buf, format="PNG")
+        annotated_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        # ── 4) Group similar colors ─────────────────────────────
+        rgb_list = [list(map(int, c)) for c in rgb_vals]
+        grouped  = sorted(
+            group_similar_colors(rgb_list, threshold=10),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        grouped_list = [{"color": col, "count": cnt} for col, cnt in grouped]
+
+        return jsonify(
+            annotated_image=annotated_b64,
+            grouped_colors=grouped_list
+        ), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify(
+            error=str(e),
+            traceback=traceback.format_exc()
+        ), 500
 
 # ─────────────────────── helpers reused from FastAPI version ───────────────
 def _prepare_primitive_binary() -> str:
