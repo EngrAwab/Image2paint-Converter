@@ -23,6 +23,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service as ChromeService # Import ChromeService
 
 
 # ─────────── Flask setup ─────────────────────────────────────────────
@@ -1001,8 +1002,14 @@ def api_geometrize():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    driver = webdriver.Chrome(options=chrome_options)
+    chrome_options.add_argument("--no-sandbox") # This line is crucial for running as root in a container
+    chrome_options.add_argument("--disable-dev-shm-usage") # Overcome limited resource problems
+    chrome_options.add_argument("--remote-debugging-port=9222") # Fix for random crashes
+    
+    # Specify the service object to avoid a deprecation warning
+    service = ChromeService(executable_path='/usr/local/bin/chromedriver')
+    
+    driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
         # 4. Load the runner HTML page
