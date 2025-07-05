@@ -284,6 +284,7 @@ def run_geometrize(target_img, shape_type, shape_count, resize_factor,
     # Start with white canvas
     current_img = Image.new("RGBA", (width, height), (255, 255, 255, 255))
 
+    # Main loop: generate and blend shapes
     for i in range(shape_count):
         shape = create_shape(shape_type)
         shape.randomize(width, height)
@@ -299,8 +300,11 @@ def run_geometrize(target_img, shape_type, shape_count, resize_factor,
             fine_end_temp=fine_end_temp
         )
 
-        # Blend if improved
+        # Blend the best shape
         shape_img = best_shape.rasterize(width, height)
         current_img = blend_image(current_img, shape_img)
+
+        # Print progress to console
+        print(f"Shape {i+1}/{shape_count}: {shape_type}", flush=True)
 
     return current_img
