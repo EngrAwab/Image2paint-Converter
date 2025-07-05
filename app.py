@@ -1002,14 +1002,23 @@ def api_geometrize():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox") # This line is crucial for running as root in a container
-    chrome_options.add_argument("--disable-dev-shm-usage") # Overcome limited resource problems
-    chrome_options.add_argument("--remote-debugging-port=9222") # Fix for random crashes
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--remote-debugging-port=9222")
+
+    # --- START OF CHANGES ---
+    # Define paths to our locally installed binaries
+    driver_path = os.path.join(os.getcwd(), ".local-bin", "chromedriver")
+    chrome_path = os.path.join(os.getcwd(), ".local-bin", "chrome-unpacked", "opt", "google", "chrome", "chrome")
     
-    # Specify the service object to avoid a deprecation warning
-    service = ChromeService(executable_path='/usr/local/bin/chromedriver')
+    # Set the binary locations in the options
+    chrome_options.binary_location = chrome_path
+    
+    # Specify the service object with the path to the local chromedriver
+    service = ChromeService(executable_path=driver_path)
     
     driver = webdriver.Chrome(service=service, options=chrome_options)
+    # --- END OF CHANGES ---
 
     try:
         # 4. Load the runner HTML page
