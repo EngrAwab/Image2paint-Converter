@@ -1,3 +1,4 @@
+import io, json, zipfile
 import os
 import base64
 import itertools
@@ -338,54 +339,62 @@ def download_shape_art():
     if path and os.path.exists(path):
         return send_file(path, as_attachment=True)
     return redirect(url_for("image_generator_page"))
+
+
 @app.route("/api/geometrize", methods=["POST"])
 def api_geometrize():
-    """
-    Expects multipart/form-data:
-      - image:      file
-      - shape_type: "triangle"|"rectangle"|"ellipse"
-      - shape_count: int
-      - resize_factor: float (e.g. 0.5)
-      # (optional) you can also accept coarse/fine iteration & temperature params
-    Returns:
-      • On success: returns the generated PNG directly.
-      • On failure: JSON { "error": "..." }, HTTP 400/500.
-    """
-    # 1. Validate & read inputs
+    # 1) Load & validate inputs
     file = request.files.get("image")
-    if not file or file.filename == "":
+    if not file:
         return jsonify(error="No image file provided"), 400
 
-    shape_type = request.form.get("shape_type", "triangle")
     try:
-        shape_count   = int(request.form.get("shape_count", 300))
-        resize_factor = float(request.form.get("resize_factor", 0.5))
-    except ValueError:
-        return jsonify(error="shape_count must be int, resize_factor float"), 400
+        shape_type    = request.form["shape_type"]
+        shape_count   = int(request.form["shape_count"])
+        resize_factor = float(request.form["resize_factor"])
+    except Exception as e:
+        return jsonify(error=f"Invalid parameters: {e}"), 400
 
-    # 2. Load the image via PIL
     try:
         img = Image.open(file).convert("RGBA")
     except Exception as e:
         return jsonify(error=f"Unable to decode image: {e}"), 400
 
-    # 3. Run the geometrize algorithm
-    try:
-        result_img = run_geometrize(
-            target_img     = img,
-            shape_type     = shape_type,
-            shape_count    = shape_count,
-            resize_factor  = resize_factor,
-            # you can pass custom iteration/temperature args here if you like
-        )
-    except Exception as e:
-        return jsonify(error=f"Geometrize failed: {e}"), 500
+    # 2) Run geometrize (you’ll see progress in your server console)
+    result_img = run_geometrize(
+        target_img    = img,
+        shape_type    = shape_type,
+        shape_count   = shape_count,
+        resize_factor = resize_factor
+    )
 
-    # 4. Send back as PNG
-    buf = BytesIO()
-    result_img.save(buf, format="PNG")
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png")
+    # 3) Dump image to bytes
+    img_buf = io.BytesIO()
+    result_img.save(img_buf, format="PNG")
+    img_buf.seek(0)
+
+    # 4) Build metadata JSON
+    metadata = {
+        "shape_type":    shape_type,
+        "shape_count":   shape_count,
+        "resize_factor": resize_factor
+    }
+    json_buf = io.BytesIO(json.dumps(metadata, indent=2).encode("utf-8"))
+
+    # 5) Pack both into a ZIP
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("geometrized.png", img_buf.getvalue())
+        zf.writestr("metadata.json",  json_buf.getvalue())
+    zip_buf.seek(0)
+
+    # 6) Send ZIP as attachment
+    return send_file(
+        zip_buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        attachment_filename="geometrize_result.zip"
+    )
 
 # ────────────────────────────────────────────────────────────────────
 #  /shape_detector  – shared-image + instant-preview backend
