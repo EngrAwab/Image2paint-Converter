@@ -990,7 +990,28 @@ def api_geometrize():
 
     # 2. Get parameters
     try:
-        num_shapes = int(request.form.get('num_shapes', 50))
+    # 4. Load the runner HTML page
+        runner_url = url_for('geometrize_runner_page', _external=True)
+        driver.get(runner_url)
+
+    # 5. Prepare and inject the image
+        image_bytes = file.read()
+        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+        data_url = f"data:image/png;base64,{image_b64}"
+
+    # --- FIX: WAIT FOR THE IMAGE ELEMENT TO BE READY ---
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "inputImage"))
+        )
+    # ---------------------------------------------------
+
+    # Use JavaScript to set the src of the image element
+        driver.execute_script(f"document.getElementById('inputImage').src = '{data_url}';")
+
+    # Wait for the image to load inside the <img> tag
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return document.getElementById('inputImage').complete;")
+        )
     except ValueError:
         return jsonify({"error": "num_shapes must be an integer"}), 400
 
