@@ -1,4 +1,4 @@
-import io, json, zipfile
+import io, json, uuid
 import os
 import base64
 import itertools
@@ -346,21 +346,22 @@ def api_geometrize():
     # 1) Load & validate inputs
     file = request.files.get("image")
     if not file:
-        return jsonify(error="No image file provided"), 400
+        return {"error": "No image file provided"}, 400
 
     try:
         shape_type    = request.form["shape_type"]
         shape_count   = int(request.form["shape_count"])
         resize_factor = float(request.form["resize_factor"])
     except Exception as e:
-        return jsonify(error=f"Invalid parameters: {e}"), 400
+        return {"error": f"Invalid parameters: {e}"}, 400
 
+    # 2) Decode image
     try:
         img = Image.open(file).convert("RGBA")
     except Exception as e:
-        return jsonify(error=f"Unable to decode image: {e}"), 400
+        return {"error": f"Unable to decode image: {e}"}, 400
 
-    # 2) Run geometrize (you’ll see progress in your server console)
+    # 3) Run geometrize (prints progress to your console)
     result_img = run_geometrize(
         target_img    = img,
         shape_type    = shape_type,
@@ -368,33 +369,47 @@ def api_geometrize():
         resize_factor = resize_factor
     )
 
-    # 3) Dump image to bytes
+    # 4) Serialize PNG to bytes
     img_buf = io.BytesIO()
     result_img.save(img_buf, format="PNG")
-    img_buf.seek(0)
+    img_data = img_buf.getvalue()
 
-    # 4) Build metadata JSON
+    # 5) Serialize metadata to JSON bytes
     metadata = {
         "shape_type":    shape_type,
         "shape_count":   shape_count,
         "resize_factor": resize_factor
     }
-    json_buf = io.BytesIO(json.dumps(metadata, indent=2).encode("utf-8"))
+    json_data = json.dumps(metadata, indent=2).encode("utf-8")
 
-    # 5) Pack both into a ZIP
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w") as zf:
-        zf.writestr("geometrized.png", img_buf.getvalue())
-        zf.writestr("metadata.json",  json_buf.getvalue())
-    zip_buf.seek(0)
+    # 6) Build multipart/mixed response
+    boundary = uuid.uuid4().hex
+    parts = []
 
-    # 6) Send ZIP as attachment
-    return send_file(
-        zip_buf,
-        mimetype="application/zip",
-        as_attachment=True,
-        attachment_filename="geometrize_result.zip"
+    # --- Part 1: PNG ---
+    parts.append(
+        f"--{boundary}\r\n"
+        "Content-Type: image/png\r\n"
+        "Content-Disposition: attachment; filename=\"geometrized.png\"\r\n\r\n"
+    .encode("utf-8") + img_data + b"\r\n"
     )
+
+    # --- Part 2: JSON ---
+    parts.append(
+        f"--{boundary}\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Disposition: attachment; filename=\"metadata.json\"\r\n\r\n"
+    .encode("utf-8") + json_data + b"\r\n"
+    )
+
+    # --- Closing boundary ---
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+
+    body = b"".join(parts)
+
+    resp = make_response(body)
+    resp.headers["Content-Type"] = f"multipart/mixed; boundary={boundary}"
+    return resp
 
 # ────────────────────────────────────────────────────────────────────
 #  /shape_detector  – shared-image + instant-preview backend
