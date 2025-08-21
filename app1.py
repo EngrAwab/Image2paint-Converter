@@ -968,128 +968,62 @@ def paint_geometrize_page():
     )
 
 # ═══════════ NEW Geometrize API Endpoint ═══════════
-@app.route("/api/geometrize", methods=["POST"])
-def api_geometrize():
-    """
-    Accepts a multipart/form-data request with:
-    - image: The image file to process.
-    - num_shapes: (optional) The number of shapes to generate. Default 50.
-    - shape_types: (optional) Comma-separated list of shape types.
-                   e.g., "RECTANGLE,TRIANGLE,ELLIPSE"
-                   Defaults to all available shapes.
-    Returns a JSON object containing the geometrizing result.
-    """
-    # 1. Validate file upload
-    if 'image' not in request.files:
-        return jsonify({"error": "No image file provided"}), 400
-    file = request.files['image']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    if not allowed_file(file.filename):
-        return jsonify({"error": "File type not allowed"}), 400
+@app.route("/geometrize_runner")
+def geometrize_runner():
+    return render_template("geometrize_runner.html")
 
-    # 2. Get parameters
-    try:
-    # 4. Load the runner HTML page
-        runner_url = url_for('geometrize_runner_page', _external=True)
-        driver.get(runner_url)
+# Main API endpoint
+@app.route("/api/generate", methods=["POST"])
+def generate():
+    if "image" not in request.files:
+        return jsonify({"error": "No image uploaded"}), 400
 
-    # 5. Prepare and inject the image
-        image_bytes = file.read()
-        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-        data_url = f"data:image/png;base64,{image_b64}"
+    # 1. Read uploaded image and encode as base64
+    image = request.files["image"]
+    img_bytes = image.read()
+    img_b64 = "data:image/png;base64," + base64.b64encode(img_bytes).decode()
 
-    # --- FIX: WAIT FOR THE IMAGE ELEMENT TO BE READY ---
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "inputImage"))
-        )
-    # ---------------------------------------------------
-
-    # Use JavaScript to set the src of the image element
-        driver.execute_script(f"document.getElementById('inputImage').src = '{data_url}';")
-
-    # Wait for the image to load inside the <img> tag
-        WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script("return document.getElementById('inputImage').complete;")
-        )
-    except ValueError:
-        return jsonify({"error": "num_shapes must be an integer"}), 400
-
-    shape_types_str = request.form.get('shape_types', 'RECTANGLE,ROTATED_RECTANGLE,TRIANGLE,ELLIPSE,ROTATED_ELLIPSE,CIRCLE,LINE,QUADRATIC_BEZIER')
-    shape_types = [s.strip() for s in shape_types_str.split(',')]
-
-
-    # 3. Setup Selenium Headless Browser
+    # 2. Setup headless Chrome
     chrome_options = Options()
-    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--headless=new")   # Headless mode
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--remote-debugging-port=9222")
-
-    # --- START OF CHANGES ---
-    # Define paths to our locally installed binaries
-    driver_path = os.path.join(os.getcwd(), ".local-bin", "chromedriver")
-    chrome_path = os.path.join(os.getcwd(), ".local-bin", "chrome-unpacked", "opt", "google", "chrome", "chrome")
-    
-    # Set the binary locations in the options
-    chrome_options.binary_location = chrome_path
-    
-    # Specify the service object with the path to the local chromedriver
-    service = ChromeService(executable_path=driver_path)
-    
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    # --- END OF CHANGES ---
+    driver = webdriver.Chrome(options=chrome_options)
 
     try:
-        # 4. Load the runner HTML page
-        # We use request.url_root to build an absolute URL to our runner page.
-        runner_url = url_for('geometrize_runner_page', _external=True)
-        driver.get(runner_url)
+        # 3. Load geometrize runner page
+        driver.get("http://localhost:5000/geometrize_runner")
 
-        # 5. Prepare and inject the image
-        image_bytes = file.read()
-        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-        data_url = f"data:image/png;base64,{image_b64}"
+        # 4. Inject uploaded image into <img id="inputImage">
+        driver.execute_script(f'document.getElementById("inputImage").src = "{img_b64}";')
 
-        # Use JavaScript to set the src of the image element
-        driver.execute_script(f"document.getElementById('inputImage').src = '{data_url}';")
+        # 5. Call the JS geometrize function
+        driver.execute_script("""
+            startGeometrizing({
+                num_shapes: 50,
+                shape_types: ["TRIANGLE", "ELLIPSE", "RECTANGLE"]
+            });
+        """)
 
-        # Wait for the image to load
-        WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script("return document.getElementById('inputImage').complete;")
-        )
+        # 6. Poll until JS sets window.geometrizeResult
+        result = None
+        for _ in range(60):  # max ~60s
+            time.sleep(1)
+            result = driver.execute_script("return window.geometrizeResult;")
+            if result:
+                break
 
-        # 6. Execute the geometrizing script
-        options = {
-            "num_shapes": num_shapes,
-            "shape_types": shape_types
-        }
-        driver.execute_script(f"startGeometrizing({json.dumps(options)});")
+        if not result:
+            return jsonify({"error": "Timeout waiting for geometrize"}), 500
 
-        # 7. Wait for the result
-        # The JS will set window.geometrizeResult when it's done.
-        WebDriverWait(driver, timeout=300).until(
-            lambda d: d.execute_script("return window.geometrizeResult;")
-        )
-
-        # 8. Retrieve and return the result
-        result_json_str = driver.execute_script("return window.geometrizeResult;")
-        result_data = json.loads(result_json_str)
-
-        return jsonify(result_data)
+        return result, 200, {"Content-Type": "application/json"}
 
     except Exception as e:
-        import traceback
-        return jsonify({"error": "An error occurred during geometrizing.", "details": str(e), "trace": traceback.format_exc()}), 500
+        return jsonify({"error": str(e)}), 500
+
     finally:
         driver.quit()
-
-@app.route("/geometrize_runner")
-def geometrize_runner_page():
-    """Serves the HTML page that runs the geometrizing script."""
-    return render_template("geometrize_runner.html")
-
 
 # ═══════════ NEW AJAX ENDPOINT ═══════════
 @app.route("/generate_recipe", methods=["POST"])
