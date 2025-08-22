@@ -340,8 +340,77 @@ def download_shape_art():
         return send_file(path, as_attachment=True)
     return redirect(url_for("image_generator_page"))
 
-
 @app.route("/api/geometrize", methods=["POST"])
+def api_geometrize():
+    # 1) Load & validate inputs
+    file = request.files.get("image")
+    if not file:
+        return jsonify(error="No image file provided"), 400
+
+    try:
+        shape_type    = request.form["shape_type"]
+        shape_count   = int(request.form["shape_count"])
+        resize_factor = float(request.form["resize_factor"])
+        output_format = request.form.get("output", "png").lower()  # "png" or "json"
+    except Exception as e:
+        return jsonify(error=f"Invalid parameters: {e}"), 400
+
+    # 2) Decode image
+    try:
+        img = Image.open(file).convert("RGBA")
+    except Exception as e:
+        return jsonify(error=f"Unable to decode image: {e}"), 400
+
+    # 3) Run geometrize
+    try:
+        result_img = run_geometrize(
+            target_img    = img,
+            shape_type    = shape_type,
+            shape_count   = shape_count,
+            resize_factor = resize_factor
+        )
+    except Exception as e:
+        return jsonify(error=f"Geometrize failed: {e}"), 500
+
+    # 4) If PNG requested
+    if output_format == "png":
+        try:
+            img_buf = io.BytesIO()
+            result_img.save(img_buf, format="PNG")
+            img_buf.seek(0)
+            return send_file(
+                img_buf,
+                mimetype="image/png",
+                as_attachment=True,
+                download_name="geometrized.png"
+            )
+        except Exception as e:
+            return jsonify(error=f"Failed to generate PNG: {e}"), 500
+
+    # 5) If JSON requested
+    elif output_format == "json":
+        try:
+            metadata = {
+                "shape_type":    shape_type,
+                "shape_count":   shape_count,
+                "resize_factor": resize_factor
+            }
+            json_buf = io.BytesIO()
+            json_buf.write(json.dumps(metadata, indent=2).encode("utf-8"))
+            json_buf.seek(0)
+            return send_file(
+                json_buf,
+                mimetype="application/json",
+                as_attachment=True,
+                download_name="metadata.json"
+            )
+        except Exception as e:
+            return jsonify(error=f"Failed to generate JSON: {e}"), 500
+
+    # 6) Unknown format
+    else:
+        return jsonify(error=f"Unsupported output format: {output_format}"), 400
+'''@app.route("/api/geometrize", methods=["POST"])
 def api_geometrize():
     # 1) Load & validate inputs
     file = request.files.get("image")
@@ -409,7 +478,7 @@ def api_geometrize():
 
     resp = make_response(body)
     resp.headers["Content-Type"] = f"multipart/mixed; boundary={boundary}"
-    return resp
+    return resp'''
 
 # ────────────────────────────────────────────────────────────────────
 #  /shape_detector  – shared-image + instant-preview backend
@@ -1475,4 +1544,5 @@ if __name__ == "__main__":
     run_simple("0.0.0.0", port, app, use_reloader=True, use_debugger=True, threaded=True)
 
     
+
 
